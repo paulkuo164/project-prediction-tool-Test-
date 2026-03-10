@@ -27,6 +27,14 @@ def get_payment_date(dt):
     target_date = (pd.to_datetime(dt).replace(day=1) + pd.DateOffset(months=2))
     return target_date.replace(day=5)
 
+def get_contract_year(target_date, contract_start_date):
+    if pd.isna(target_date) or target_date is None: return "未知年度"
+    t_dt = pd.to_datetime(target_date)
+    s_dt = pd.to_datetime(contract_start_date)
+    months_delta = (t_dt.year - s_dt.year) * 12 + (t_dt.month - s_dt.month)
+    year_num = (months_delta // 12) + 1
+    return f"第 {int(year_num)} 年度"
+
 def clean_and_process(df, base_start_date=None):
     df.columns = [str(c).strip() for c in df.columns]
     date_candidates = [c for c in df.columns if any(k in c for k in ["日", "期"])]
@@ -44,50 +52,80 @@ def clean_and_process(df, base_start_date=None):
     df["天數_norm"] = (df["天數"] / (df["天數"].max() if df["天數"].max() > 0 else 1)) * 100
     return df, date_col, cum_col, actual_start
 
-# ===== 📂 2. 資料處理流程 =====
+# ===== 📂 2. 資料來源與廠商績效抓取 =====
 st.sidebar.header("📂 資料來源")
-active_file = st.sidebar.file_uploader("上傳歷史案件 Excel", type=["xlsx"])
+default_file = "歷史案件資料(工期+金額)改.xlsx"
+has_internal = os.path.exists(default_file)
+
+if has_internal:
+    data_option = st.sidebar.radio("數據源", ["使用內建歷史檔", "手動上傳新檔案"])
+    active_file = default_file if data_option == "使用內建歷史檔" else st.sidebar.file_uploader("上傳 Excel", type=["xlsx"])
+else:
+    active_file = st.sidebar.file_uploader("上傳歷史案件 Excel", type=["xlsx"])
+
+perf_summary = {}
 
 if active_file:
     xls = pd.ExcelFile(active_file)
+    
+    # --- 🏢 廠商績效自動抓取核心 ---
     perf_list = []
     for sheet in xls.sheet_names:
         if "歷史樣本" in sheet:
             try:
                 df_block = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=3, usecols="E:H")
-                plan_d = pd.to_numeric(df_block.iloc[1, 2], errors='coerce')
-                act_d = pd.to_numeric(df_block.iloc[1, 3], errors='coerce')
+                plan_d = pd.to_numeric(df_block.iloc[1, 2], errors='coerce') 
+                act_d = pd.to_numeric(df_block.iloc[1, 3], errors='coerce')  
+                
                 if plan_d > 0 and act_d > 0:
                     case_ratio = act_d / plan_d
-                    for r in [1, 2]:
+                    for r in [1, 2]: 
                         e_name = str(df_block.iloc[r, 0]).strip()
                         f_name = str(df_block.iloc[r, 1]).strip()
-                        if e_name not in ["nan", "0", "", "None"]: perf_list.append({'name': e_name, 'type': 'EPC', 'ratio': case_ratio})
-                        if f_name not in ["nan", "0", "", "None"]: perf_list.append({'name': f_name, 'type': 'PCM', 'ratio': case_ratio})
+                        if e_name not in ["nan", "0", "", "None"]:
+                            perf_list.append({'name': e_name, 'type': 'EPC', 'ratio': case_ratio})
+                        if f_name not in ["nan", "0", "", "None"]:
+                            perf_list.append({'name': f_name, 'type': 'PCM', 'ratio': case_ratio})
             except: continue
+            
     df_perf = pd.DataFrame(perf_list)
-    perf_summary = df_perf.groupby(['name', 'type'])['ratio'].mean().to_dict() if not df_perf.empty else {}
+    if not df_perf.empty:
+        perf_summary = df_perf.groupby(['name', 'type'])['ratio'].mean().to_dict()
 
     target_case_name = st.sidebar.text_input("目標案件工作表", value="平均預測")
     
     if target_case_name in xls.sheet_names:
         df_init = pd.read_excel(xls, sheet_name=target_case_name, header=None, nrows=2, usecols="A:F")
+        init_contract_date = pd.to_datetime(df_init.iloc[1, 0]).date()
         init_total_price = float(df_init.iloc[1, 4])
         
-        # 參數設置
-        st.sidebar.header("⚙️ 模擬參數")
-        total_p = st.sidebar.number_input("總價金額", value=init_total_price)
-        design_f = st.sidebar.number_input("設計金額", value=round(total_p * 0.02, 0))
+        # --- ⚙️ 模擬參數調整 ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("⚙️ 模擬參數調整")
+        total_p = st.sidebar.number_input("總價金額 (元)", value=init_total_price, step=1000000.0)
+        design_f = st.sidebar.number_input("統包設計金額", value=round(total_p * 0.02, 0), step=10000.0)
         const_p = total_p - design_f
-        contract_d = st.sidebar.date_input("合約起始日期")
+        contract_d = st.sidebar.date_input("合約起始日期", value=init_contract_date)
         start_d = st.sidebar.date_input("預計開工日期", value=contract_d + timedelta(days=365))
-        manual_dur = st.sidebar.number_input("基準施工總天數", value=1100)
-        num_sims = st.sidebar.slider("蒙地卡羅次數", 100, 1000, 400)
-        
-        env_ratio = st.sidebar.slider("修正倍率", 0.5, 2.5, 1.0)
-        use_protection = st.sidebar.toggle("啟動進度保護", value=True)
+        manual_dur = st.sidebar.number_input("基準預期施工總天數", value=1100)
+        num_sims = st.sidebar.slider("蒙地卡羅模擬次數", 100, 1000, 400)
 
-        # 模擬計算
+        # --- ✨ 廠商風險修正連動 ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("⚖️ 廠商風險評估")
+        all_e = sorted(list(set([k[0] for k in perf_summary.keys() if k[1] == 'EPC'])))
+        all_f = sorted(list(set([k[0] for k in perf_summary.keys() if k[1] == 'PCM'])))
+        sel_e = st.sidebar.multiselect("選擇統包商 (EPC)", options=all_e)
+        sel_f = st.sidebar.multiselect("選擇監造單位 (PCM)", options=all_f)
+        
+        r_vals = [perf_summary.get((e, 'EPC'), 1.0) for e in sel_e] + [perf_summary.get((f, 'PCM'), 1.0) for f in sel_f]
+        vendor_suggested = np.mean(r_vals) if r_vals else 1.0
+        
+        use_env_adj = st.sidebar.toggle("啟用風險修正係數", value=True if r_vals else False)
+        env_ratio = st.sidebar.slider("修正倍率 (實際/預計)", 0.5, 2.5, float(vendor_suggested)) if use_env_adj else 1.0
+        use_protection = st.sidebar.toggle("啟動進度保護機制", value=True)
+
+        # --- 核心數據處理與模擬 ---
         start_dt = pd.to_datetime(start_d)
         target_df, date_col, cum_col, _ = clean_and_process(pd.read_excel(xls, target_case_name), start_dt)
         
@@ -97,8 +135,9 @@ if active_file:
             df_h, _, _, _ = clean_and_process(pd.read_excel(xls, sheet), None)
             if df_h is not None:
                 df_h["案件"] = sheet; case_list.append(df_h)
-                t_y = np.interp(np.linspace(0, 100, 100), target_df["天數_norm"].values, target_df["累計_norm"].ffill().fillna(0).values)
-                c_y = np.interp(np.linspace(0, 100, 100), df_h["天數_norm"].values, df_h["累計_norm"].ffill().fillna(0).values)
+                x_i = np.linspace(0, 100, 100)
+                t_y = np.interp(x_i, target_df["天數_norm"].values, target_df["累計_norm"].ffill().fillna(0).values)
+                c_y = np.interp(x_i, df_h["天數_norm"].values, df_h["累計_norm"].ffill().fillna(0).values)
                 case_info[sheet] = {'similarity': max(0.001, np.corrcoef(t_y, c_y)[0, 1])}
         
         merged_df = pd.concat(case_list, ignore_index=True)
@@ -119,32 +158,88 @@ if active_file:
                 if len(sub) >= 2:
                     y_s = sub["天數_norm"].to_numpy() / 100 * manual_dur
                     interp_d = np.interp(np.linspace(l, h, 20), sub["累計_norm"].to_numpy(), y_s)
-                    inc = max(1, interp_d[-1] - interp_d[0])
+                    inc = max(0, interp_d[-1] - interp_d[0]) 
                     curr_d += inc
                     curve_days.extend(np.linspace(curr_d-inc, curr_d, 20).tolist())
+            
             if curve_days:
-                sim_matrix.append(np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days))
+                interp_res = np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days)
+                if not use_protection:
+                    interp_res += np.random.normal(0, 1.5, len(interp_res))
+                sim_matrix.append(interp_res)
 
         sim_matrix = np.atleast_2d(sim_matrix)
         mean_c = np.nanmean(sim_matrix, axis=0)
         p10, p90 = np.nanpercentile(sim_matrix, 10, axis=0), np.nanpercentile(sim_matrix, 90, axis=0)
-        p15, p85 = np.nanpercentile(sim_matrix, 15, axis=0), np.nanpercentile(sim_matrix, 85, axis=0)
-        p25, p75 = np.nanpercentile(sim_matrix, 25, axis=0), np.nanpercentile(sim_matrix, 75, axis=0)
 
-        # 繪圖
-        def to_dates(curve): return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
+        # --- 📈 3. 圖表渲染 ---
+        def to_dates(curve): return [start_dt + timedelta(days=int(max(0, d) * env_ratio)) for d in curve]
+        
         u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
         u_prog = np.concatenate([target_df["累計_norm"].ffill().fillna(0).values, prog_steps])
         s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
         hover_pay = [f"{int(const_p * (np.interp(d * env_ratio, u_days, u_prog) - np.interp(max(0, (d-30) * env_ratio), u_days, u_prog)) / 100):,} 元" for d in mean_c]
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.1)', name='90% 信賴區間', hoverinfo='skip'))
-        fig.add_trace(go.Scatter(x=to_dates(p15)+to_dates(p85)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(241,196,15,0.15)', name='70% 信賴區間', hoverinfo='skip'))
-        fig.add_trace(go.Scatter(x=to_dates(p25)+to_dates(p75)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(46,134,193,0.2)', name='50% 信賴區間', hoverinfo='skip'))
-        fig.add_trace(go.Scatter(x=to_dates(mean_c), y=prog_steps, mode='lines', name='預測進度 (Mean)', line=dict(color='#3498db', width=3.5, dash='dash'), customdata=hover_pay, hovertemplate="日期: %{x}<br>進度: %{y:.1f}%<br>支用: %{customdata}<extra></extra>"))
-        fig.update_layout(title=f"<b>{target_case_name} S-Curve 進度預測</b>", hovermode="x unified", template="plotly_white", height=600, legend=dict(orientation="h", y=1.1))
+        fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.15)', line=dict(color='rgba(255,255,255,0)'), name='風險信心區間 (P10-P90)'))
+        fig.add_trace(go.Scatter(x=to_dates(mean_c), y=prog_steps, mode='lines', name='平均預測進度', line=dict(color='#3498db', width=3.5, dash='dash'), customdata=hover_pay, hovertemplate="日期: %{x}<br>進度: %{y:.1f}%<br>預估當月支用: %{customdata}<extra></extra>"))
+        
+        fig.update_layout(title=f"<b>{target_case_name} S-Curve 進度預測 (修正: {env_ratio:.2f})</b>", hovermode="x unified", template="plotly_white", height=600)
         st.plotly_chart(fig, use_container_width=True)
 
-    else: st.error("找不到工作表")
-else: st.info("請上傳 Excel 檔案。")
+        # --- 💰 4. 全週期金流分析 ---
+        st.markdown("---")
+        st.subheader("💰 全週期金流分析")
+        
+        if 'design_df' not in st.session_state:
+            st.session_state.design_df = pd.DataFrame([
+                {"期別": "設計一期", "基準點": "合約起始", "相對月數": 3, "比例": 0.10},
+                {"期別": "設計四期", "基準點": "預計開工", "相對月數": 6, "比例": 0.45},
+                {"期別": "設計五期", "基準點": "預計完工", "相對月數": 1, "比例": 0.10},
+            ])
+
+        with st.expander("🛠️ 調整設計款支付時程", expanded=False):
+            st.session_state.design_df = st.data_editor(st.session_state.design_df, num_rows="dynamic", use_container_width=True)
+
+        mean_finish_dt = start_dt + timedelta(days=int(mean_c[-1] * env_ratio))
+        pay_data = []
+        for _, row in st.session_state.design_df.iterrows():
+            base_ref = pd.to_datetime(contract_d) if row["基準點"] == "合約起始" else (pd.to_datetime(start_d) if row["基準點"] == "預計開工" else mean_finish_dt)
+            p_date = get_payment_date(get_month_end(base_ref + pd.DateOffset(months=int(row.get("相對月數", 0)))))
+            pay_data.append({"期別": row["期別"], "性質": "設計款", "支付日": p_date, "金額": int(design_f * row.get("比例", 0))})
+
+        curr_m = pd.to_datetime(start_d).replace(day=1)
+        prev_p = 0
+        while curr_m <= (mean_finish_dt + timedelta(days=90)): 
+            m_end = get_month_end(curr_m)
+            if m_end >= start_dt:
+                ref_day = (m_end - start_dt).days / env_ratio
+                cp = np.interp(ref_day, u_days / env_ratio, u_prog)
+                if cp > prev_p:
+                    amt = int(const_p * (cp - prev_p) / 100)
+                    if amt > 0:
+                        pay_data.append({"期別": f"工程估驗 {m_end.strftime('%Y/%m')}", "性質": "工程款", "支付日": get_payment_date(m_end), "金額": amt})
+                    prev_p = cp
+            if prev_p >= 100: break
+            curr_m += pd.DateOffset(months=1)
+
+        df_pay = pd.DataFrame(pay_data)
+        
+        tab1, tab2, tab3 = st.tabs(["📊 每月支出趨勢", "📜 詳細金流明細", "📅 工期情境"])
+        with tab1:
+            if not df_pay.empty:
+                df_monthly = df_pay.groupby(df_pay['支付日'].dt.strftime('%Y-%m'))['金額'].sum().reset_index()
+                st.plotly_chart(go.Figure(data=[go.Bar(x=df_monthly['支付日'], y=df_monthly['金額'], marker_color='#2ecc71', text=[f"{v/10000:.0f}萬" for v in df_monthly['金額']], textposition='outside')]), use_container_width=True)
+        with tab2:
+            st.dataframe(df_pay.sort_values("支付日"), use_container_width=True)
+        with tab3:
+            st.table(pd.DataFrame([
+                {"情境": "樂觀 (P10)", "預計完工": (start_dt + timedelta(days=int(p10[-1] * env_ratio))).date()},
+                {"情境": "平均 (Mean)", "預計完工": mean_finish_dt.date()},
+                {"情境": "悲觀 (P90)", "預計完工": (start_dt + timedelta(days=int(p90[-1] * env_ratio))).date()},
+            ]))
+            
+    else:
+        st.error(f"找不到工作表「{target_case_name}」")
+else:
+    st.info("💡 請上傳檔案開始。")
