@@ -158,45 +158,60 @@ if active_file:
         prog_steps = np.linspace(last_p, 100, 101)
         sim_matrix = []
 
+      # --- 【核心邏輯恢復】蒙地卡羅模擬 ---
         for _ in range(num_sims):
             curve_days, curr_d = [], last_d
+            # 恢復 10 個標準分段
             for l, h in zip(np.linspace(last_p, 90, 10), np.linspace(last_p+10, 100, 10)):
                 case = np.random.choice(top_names, p=weights)
                 sub = merged_df[(merged_df["案件"] == case) & (merged_df["累計_norm"] >= l) & (merged_df["累計_norm"] <= h)]
                 if len(sub) >= 2:
                     y_s = sub["天數_norm"].to_numpy() / 100 * manual_dur
                     interp_d = np.interp(np.linspace(l, h, 20), sub["累計_norm"].to_numpy(), y_s)
-                    # 不再強迫 inc 至少為 1，允許 0 增量以呈現停滯
-                    inc = max(0, interp_d[-1] - interp_d[0]) 
+                    
+                    # 【關鍵點】恢復強制增量至少為 1 天，確保曲線趨勢的連續性與原始走勢一致
+                    inc = max(1, interp_d[-1] - interp_d[0])
+                    
                     curr_d += inc
                     curve_days.extend(np.linspace(curr_d-inc, curr_d, 20).tolist())
             
             if curve_days:
-                # 無論是否有保護，基本插值不可少，否則繪圖會斷裂
-                interp_res = np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days)
-                if not use_protection:
-                    # 如果關閉保護，加入隨機擾動模擬不規則感
-                    interp_res += np.random.normal(0, 1.5, len(interp_res))
-                sim_matrix.append(interp_res)
+                sim_matrix.append(np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days))
 
         sim_matrix = np.atleast_2d(sim_matrix)
+        # 恢復計算多個信賴區間
         mean_c = np.nanmean(sim_matrix, axis=0)
         p10, p90 = np.nanpercentile(sim_matrix, 10, axis=0), np.nanpercentile(sim_matrix, 90, axis=0)
+        p15, p85 = np.nanpercentile(sim_matrix, 15, axis=0), np.nanpercentile(sim_matrix, 85, axis=0)
+        p25, p75 = np.nanpercentile(sim_matrix, 25, axis=0), np.nanpercentile(sim_matrix, 75, axis=0)
 
-        # --- 📈 3. 圖表渲染 ---
-        def to_dates(curve): return [start_dt + timedelta(days=int(max(0, d) * env_ratio)) for d in curve]
+        # --- 【圖表呈現恢復】Plotly 渲染 ---
+        def to_dates(curve): return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
         
-        # 建立支付金額提示資訊
-        u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
-        u_prog = np.concatenate([target_df["累計_norm"].ffill().fillna(0).values, prog_steps])
-        s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
-        hover_pay = [f"{int(const_p * (np.interp(d * env_ratio, u_days, u_prog) - np.interp(max(0, (d-30) * env_ratio), u_days, u_prog)) / 100):,} 元" for d in mean_c]
-
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.15)', line=dict(color='rgba(255,255,255,0)'), name='風險信心區間 (P10-P90)'))
-        fig.add_trace(go.Scatter(x=to_dates(mean_c), y=prog_steps, mode='lines', name='平均預測進度', line=dict(color='#3498db', width=3.5, dash='dash'), customdata=hover_pay, hovertemplate="日期: %{x}<br>進度: %{y:.1f}%<br>預估當月支用: %{customdata}<extra></extra>"))
+
+        # 1. 恢復 3 層風險陰影 (90%, 70%, 50%)
+        fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.1)', line=dict(color='rgba(255,255,255,0)'), name='90% 信賴區間', hoverinfo='skip'))
+        fig.add_trace(go.Scatter(x=to_dates(p15)+to_dates(p85)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(241,196,15,0.15)', line=dict(color='rgba(255,255,255,0)'), name='70% 信賴區間', hoverinfo='skip'))
+        fig.add_trace(go.Scatter(x=to_dates(p25)+to_dates(p75)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(46,134,193,0.2)', line=dict(color='rgba(255,255,255,0)'), name='50% 信賴區間', hoverinfo='skip'))
         
-        fig.update_layout(title=f"<b>{target_case_name} S-Curve 進度預測 (廠商修正: {env_ratio:.2f})</b>", hovermode="x unified", template="plotly_white", height=600)
+        # 2. 恢復預測平均線樣式 (線寬 3.5, 虛線)
+        fig.add_trace(go.Scatter(
+            x=to_dates(mean_c), y=prog_steps, mode='lines', 
+            name='預測進度 (Mean)', 
+            line=dict(color='#3498db', width=3.5, dash='dash'),
+            customdata=hover_pay,
+            hovertemplate="<b>日期</b>: %{x|%Y-%m-%d}<br><b>工程進度</b>: %{y:.2f}%<br><b>預估支付</b>: %{customdata}<extra></extra>"
+        ))
+        
+        # 3. 恢復 Layout 設定與圖例位置
+        fig.update_layout(
+            title=f"<b>{target_case_name} S-Curve 進度預測 (風險修正: {env_ratio:.2f})</b>",
+            hovermode="x unified",
+            template="plotly_white",
+            height=600,
+            legend=dict(orientation="h", y=1.1)
+        )
         st.plotly_chart(fig, use_container_width=True)
 
         # --- 💰 4. 全週期金流分析 ---
@@ -254,4 +269,5 @@ if active_file:
     else:
         st.error(f"找不到工作表「{target_case_name}」")
 else:
+
     st.info("💡 請上傳檔案開始。")
