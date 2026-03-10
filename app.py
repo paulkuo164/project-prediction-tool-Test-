@@ -8,6 +8,12 @@ import warnings
 import io
 import os
 
+
+st.set_page_config(page_title="工程金流預測儀表板", layout="wide")
+
+# 在這裡加入您的 LOGO
+st.logo("logo.png", link="https://www.hurc.org.tw/hurc/hpage")
+
 # ===== 🤐 系統設定 =====
 warnings.filterwarnings('ignore')
 np.seterr(divide='ignore', invalid='ignore')
@@ -280,6 +286,7 @@ if active_file:
         st.error(f"找不到工作表「{target_case_name}」")
 else:
     st.info("💡 請上傳檔案以開始分析。系統將自動從歷史樣本提取廠商績效。")
+
 
 
 
