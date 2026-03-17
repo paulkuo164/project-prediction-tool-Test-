@@ -225,7 +225,7 @@ if active_file:
                 "<b>日期</b>: %{x|%Y-%m-%d}<br>" +
                 "<b>工程進度</b>: %{y:.2f}%<br>" +
                 "<b>預估當期支付</b>: %{customdata[0]}<br>" +
-                "<b>樂觀/悲觀價差</b>: <span style='color:red'>%{customdata[1]}</span>" +
+                "<b>樂觀-悲觀價差</b>: <span style='color:red'>%{customdata[1]}</span>" +
                 "<extra></extra>"
             )
         ))
