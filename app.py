@@ -233,7 +233,7 @@ if active_file:
                 "└ 悲觀 (P90): %{customdata[4]}<br><br>" +
                 "<b>💰 金流預估：</b><br>" +
                 "└ 預估當期支付: %{customdata[0]}<br>" +
-                "└ 樂觀/悲觀價差: <span style='color:red'>%{customdata[1]}</span>" +
+                "└ 風險價差(樂觀-悲觀): <span style='color:red'>%{customdata[1]}</span>" +
                 "<extra></extra>"
             )
         ))
