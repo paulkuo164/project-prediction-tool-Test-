@@ -174,50 +174,53 @@ if active_file:
         p15, p85 = np.nanpercentile(sim_matrix, 15, axis=0), np.nanpercentile(sim_matrix, 85, axis=0)
         p25, p75 = np.nanpercentile(sim_matrix, 25, axis=0), np.nanpercentile(sim_matrix, 75, axis=0)
 
-  # --- 📈 3. 圖表渲染 (驗證版：含百分比顯示) ---
-        def to_dates(curve): return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
+ # === 📈 3. 圖表渲染 (完整修正版：含驗證數據與動態高亮) ===
+
+        # A. 定義日期轉換函式 (必須放在最前面以避免 NameError)
+        def to_dates(curve): 
+            return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
         
+        # B. 準備基礎數據與排序
         u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
         u_prog = np.concatenate([target_df["累計_norm"].values, prog_steps])
-        s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
+        s_idx = np.argsort(u_days)
+        u_days, u_prog = u_days[s_idx], u_prog[s_idx]
 
-        # 準備 Hover 數據
+        # C. 計算鼠標動態數據 (含百分比驗證與風險金流)
         hover_custom_data = []
         for i, d in enumerate(mean_c):
-            # 1. 取得當前點的平均進度 (y軸值)
+            # 1. 取得各分位數在「同一天 d」的進度百分比
             mean_prog = prog_steps[i]
-            
-            # 2. 透過插值找出在「同一天 d」時，樂觀與悲觀路徑對應的進度
-            # 注意：p10, p90 陣列儲存的是「達到某進度所需的天數」
             p10_prog = np.interp(d, p10, prog_steps)
             p90_prog = np.interp(d, p90, prog_steps)
             
-            # 3. 計算預估支付金額 (以 Mean 為基準)
+            # 2. 計算支付金額 (以 Mean 曲線為基準，計算過去 30 天的增量)
             prev_d = max(0, d - 30)
             prog_now = np.interp(d * env_ratio, u_days, u_prog)
             prog_prev = np.interp(prev_d * env_ratio, u_days, u_prog)
             pay_amt = int(const_p * (prog_now - prog_prev) / 100)
             
-            # 4. 計算價差金額 (P10進度 - P90進度)
+            # 3. 計算風險價差金額 (P10進度 - P90進度)
             risk_gap_amt = int(const_p * (p10_prog - p90_prog) / 100)
             
-            # 儲存所有要顯示在鼠標上的變數
+            # 封裝數據供 Plotly 使用
             hover_custom_data.append([
-                f"{pay_amt:,} 元",       # [0] 預估支付
-                f"{risk_gap_amt:,} 元",   # [1] 價差金額
-                f"{p10_prog:.2f}%",      # [2] 樂觀進度
-                f"{mean_prog:.2f}%",     # [3] 平均進度
-                f"{p90_prog:.2f}%"       # [4] 悲觀進度
+                f"{pay_amt:,} 元",       # [0] 預估當期支付
+                f"{risk_gap_amt:,} 元",   # [1] 樂觀/悲觀價差
+                f"{p10_prog:.2f}%",      # [2] 樂觀進度 P10
+                f"{mean_prog:.2f}%",     # [3] 平均進度 Mean
+                f"{p90_prog:.2f}%"       # [4] 悲觀進度 P90
             ])
 
+        # D. 開始構建 Plotly 圖表
         fig = go.Figure()
-        
-        # 區間層
+
+        # 1. 加入信賴區間陰影 (由外而內：90% -> 70% -> 50%)
         fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.1)', line=dict(color='rgba(255,255,255,0)'), name='90% 信賴區間', hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=to_dates(p15)+to_dates(p85)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(241,196,15,0.15)', line=dict(color='rgba(255,255,255,0)'), name='70% 信賴區間', hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=to_dates(p25)+to_dates(p75)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(46,134,193,0.2)', line=dict(color='rgba(255,255,255,0)'), name='50% 信賴區間', hoverinfo='skip'))
         
-        # 主預測線
+        # 2. 加入主預測線 (Mean)
         fig.add_trace(go.Scatter(
             x=to_dates(mean_c), 
             y=prog_steps, 
@@ -226,27 +229,41 @@ if active_file:
             line=dict(color='#3498db', width=3.5, dash='dash'),
             customdata=hover_custom_data,
             hovertemplate=(
-                "<b>📅 日期</b>: %{x|%Y-%m-%d}<br><br>" +
+                "<b>📅 預測日期</b>: %{x|%Y-%m-%d}<br><br>" +
                 "<b>📈 進度驗證：</b><br>" +
-                "└ 樂觀 (P10): %{customdata[2]}<br>" +
-                "└ 平均 (Mean): %{customdata[3]}<br>" +
+                "├ 樂觀 (P10): %{customdata[2]}<br>" +
+                "├ 平均 (Mean): %{customdata[3]}<br>" +
                 "└ 悲觀 (P90): %{customdata[4]}<br><br>" +
                 "<b>💰 金流預估：</b><br>" +
-                "└ 預估當期支付: %{customdata[0]}<br>" +
+                "├ 預估當期支付: %{customdata[0]}<br>" +
                 "└ 樂觀/悲觀價差: <span style='color:red'>%{customdata[1]}</span>" +
                 "<extra></extra>"
             )
         ))
         
+        # E. 設定圖表樣式與動態高亮 (Spikeline)
         fig.update_layout(
-            title=f"<b>{target_case_name} S-Curve 進度預測與風險分析</b>",
+            title=f"<b>{target_case_name} S-Curve 進度預測與風險分析 (風險修正: {env_ratio:.2f})</b>",
             hovermode="x unified",
             template="plotly_white",
             height=650,
+            xaxis=dict(
+                title="預估日期",
+                showspikes=True,
+                spikemode="across",
+                spikesnap="cursor",
+                spikethickness=45, # 加粗引導線，模擬「圈出面積」視覺感
+                spikecolor="rgba(52, 152, 219, 0.12)", # 淺藍色半透明高亮
+            ),
+            yaxis=dict(
+                title="工程累計進度 (%)",
+                range=[0, 105]
+            ),
             legend=dict(orientation="h", y=1.1)
         )
-        st.plotly_chart(fig, use_container_width=True)
 
+        # F. 渲染到 Streamlit 網頁
+        st.plotly_chart(fig, use_container_width=True)
         # === 💰 第二部分：全週期金流分析 ===
         st.markdown("---")
         st.subheader("💰 全週期金流分析與互動排程")
