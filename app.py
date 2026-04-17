@@ -625,10 +625,7 @@ if active_file:
                         yearly_sum = int(pd.to_numeric(df_y["金額"], errors='coerce').fillna(0).sum())
                         st.markdown(f"**💰 {year} 合計： `{yearly_sum:,}` 元**")
 
-                # 全案總計
-                total_sum = int(pd.to_numeric(df_wide["金額"], errors='coerce').fillna(0).sum())
-                st.markdown("---")
-                st.markdown(f"### 🏁 全案總計： `{total_sum:,}` 元")
+             
 
         with tab4:
             col1, col2 = st.columns(2)
