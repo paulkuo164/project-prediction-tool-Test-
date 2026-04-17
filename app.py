@@ -644,17 +644,7 @@ if active_file:
                 # === 匯出多工作表 Excel ===
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    # Sheet 1: 按月工程款 (S-curve 樞紐寬表)
-                    export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
-                    if not export_scurve.empty:
-                        # 加總計列
-                        total_row = {"月份": "總計"}
-                        for c in ["施工費", "專管監造", "準備金", "物調款", "當月合計"]:
-                            total_row[c] = int(export_scurve[c].sum())
-                        export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
-                    export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
-
-                    # Sheet 2: 寬表總覽（每期一列，金額橫向分布）
+                    # Sheet 1: 寬表總覽（每期一列，金額橫向分布）
                     export_wide = df_wide.copy()
                     if not export_wide.empty:
                         # 支付日轉為日期字串
@@ -671,6 +661,16 @@ if active_file:
                             total_row[c] = int(export_wide[c].sum())
                         export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
                     export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
+
+                    # Sheet 2: 按月工程款 (S-curve 樞紐寬表)
+                    export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
+                    if not export_scurve.empty:
+                        # 加總計列
+                        total_row = {"月份": "總計"}
+                        for c in ["施工費", "專管監造", "準備金", "物調款", "當月合計"]:
+                            total_row[c] = int(export_scurve[c].sum())
+                        export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
+                    export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
 
                     # Sheet 3: 費用拆分（參考用）
                     fee_export_df = pd.DataFrame([
