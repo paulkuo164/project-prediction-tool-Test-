@@ -105,7 +105,7 @@ if active_file:
         st.sidebar.markdown("---")
         st.sidebar.header("⚙️ 模擬參數調整")
         total_p = st.sidebar.number_input("總價金額 (元)", value=init_total_price, step=1000000.0)
-        design_f = st.sidebar.number_input("統包設計金額", value=round(total_p * 0.02, 0), step=10000.0)
+        design_f = st.sidebar.number_input("統包設計金額", value=round(total_p * 0.03, 0), step=10000.0)
         const_p = total_p - design_f
         contract_d = st.sidebar.date_input("合約起始日期", value=init_contract_date)
         start_d = st.sidebar.date_input("預計開工日期", value=contract_d + timedelta(days=365))
