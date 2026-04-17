@@ -18,7 +18,6 @@ st.logo("logo.png", link="https://www.hurc.org.tw/hurc/hpage")
 warnings.filterwarnings('ignore')
 np.seterr(divide='ignore', invalid='ignore')
 
-st.set_page_config(page_title="工程金流預測儀表板", layout="wide")
 st.title("🏗️ 工程進度預測與金流預估")
 
 # ===== 🛠️ 1. 核心邏輯函式 =====
@@ -76,13 +75,11 @@ if active_file:
     for sheet in xls.sheet_names:
         if "歷史樣本" in sheet:
             try:
-                # 讀取 E2:H3 (header=None, row 1~2, col 4~7)
                 df_block = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=3, usecols="E:H").fillna(0)
-                plan_d = df_block.iloc[1, 2] # G2
-                act_d = df_block.iloc[1, 3]  # H2
+                plan_d = df_block.iloc[1, 2]
+                act_d = df_block.iloc[1, 3]
                 case_ratio = act_d / plan_d if (isinstance(plan_d, (int, float)) and plan_d > 0) else 1.0
                 
-                # E2, E3 (EPC); F2, F3 (PCM)
                 for r in [1, 2]:
                     e_name, f_name = df_block.iloc[r, 0], df_block.iloc[r, 1]
                     if e_name != 0 and str(e_name).strip() != "":
@@ -104,9 +101,59 @@ if active_file:
         # --- ⚙️ 模擬參數調整 ---
         st.sidebar.markdown("---")
         st.sidebar.header("⚙️ 模擬參數調整")
-        total_p = st.sidebar.number_input("總價金額 (元)", value=init_total_price, step=1000000.0)
-        design_f = st.sidebar.number_input("統包設計金額", value=round(total_p * 0.03, 0), step=10000.0)
+        total_p = st.sidebar.number_input("決標金額 (元)", value=init_total_price, step=1000000.0,
+                                          help="本案決標總金額，為所有費用拆分的基礎")
+        
+        # === 💼 費用結構拆分 ===
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("💼 費用結構拆分")
+        
+        # 設計費 (決標金額的百分比)
+        design_pct = st.sidebar.slider("設計費比例 (%)", 0.0, 10.0, 3.0, 0.1,
+                                       help="設計費佔決標金額之比例，預設 3%")
+        design_f = round(total_p * design_pct / 100, 0)
+        st.sidebar.caption(f"　設計費：**{design_f:,.0f} 元**")
+        
+        # 統包施工費 = 決標金額 - 設計費 (所有後續費用的基數)
         const_p = total_p - design_f
+        st.sidebar.markdown(f"📌 **統包施工費：`{const_p:,.0f}` 元**")
+        st.sidebar.caption("（= 決標金額 − 設計費，下列各項費用之計算基數）")
+        
+        # 專管及監造服務費 (可調)
+        pcm_pct = st.sidebar.slider("專管及監造服務費 (%)", 0.0, 10.0, 4.0, 0.1,
+                                    help="包含耐震特別監督，預設 4%，可調")
+        pcm_fee = round(const_p * pcm_pct / 100, 0)
+        st.sidebar.caption(f"　專管監造費：**{pcm_fee:,.0f} 元**")
+        
+        # 準備金 (鎖定 2%)
+        reserve_fee = round(const_p * 0.02, 0)
+        st.sidebar.caption(f"🔒 準備金 (2%)：**{reserve_fee:,.0f} 元**")
+        
+        # 物調款 (可調)
+        price_adj_pct = st.sidebar.slider("物調款 (%)", 0.0, 20.0, 8.0, 0.1,
+                                          help="物價調整款，預設 8%，可調")
+        price_adj_fee = round(const_p * price_adj_pct / 100, 0)
+        st.sidebar.caption(f"　物調款：**{price_adj_fee:,.0f} 元**")
+        
+        # 外管補助費 (鎖定 1%)
+        external_fee = round(const_p * 0.01, 0)
+        st.sidebar.caption(f"🔒 外管補助費 (1%)：**{external_fee:,.0f} 元**")
+        
+        # 公共藝術 (鎖定 1%)
+        public_art_fee = round(const_p * 0.01, 0)
+        st.sidebar.caption(f"🔒 公共藝術 (1%)：**{public_art_fee:,.0f} 元**")
+        
+        # 其他費用 (手動輸入)
+        # 建議值：統包施工費 × 15% − 設計費 − 專管 − 準備金 − 物調款
+        suggested_other = max(0, round(const_p * 0.15 - design_f - pcm_fee - reserve_fee - price_adj_fee, 0))
+        other_fee = st.sidebar.number_input("其他費用 (元)", value=float(suggested_other), step=10000.0,
+                                            help=f"建議值 {suggested_other:,.0f} 元（= 統包施工費×15% − 設計費 − 專管 − 準備金 − 物調款）")
+        
+        # 費用總表
+        total_all_fees = design_f + pcm_fee + reserve_fee + price_adj_fee + external_fee + public_art_fee + other_fee
+        st.sidebar.markdown(f"💰 **費用總計：`{total_all_fees:,.0f}` 元**")
+        
+        st.sidebar.markdown("---")
         contract_d = st.sidebar.date_input("合約起始日期", value=init_contract_date)
         start_d = st.sidebar.date_input("預計開工日期", value=contract_d + timedelta(days=365))
         manual_dur = st.sidebar.number_input("基準預期施工總天數", value=1100)
@@ -126,6 +173,24 @@ if active_file:
         use_env_adj = st.sidebar.toggle("啟用風險修正係數", value=True if r_vals else False)
         env_ratio = st.sidebar.slider("修正倍率", 0.5, 2.0, float(vendor_suggested)) if use_env_adj else 1.0
         use_protection = st.sidebar.toggle("啟動進度保護機制", value=True)
+
+        # === 📋 主畫面：費用拆分摘要 ===
+        with st.expander("💼 本案費用結構拆分（點擊展開/收合）", expanded=False):
+            fee_breakdown_df = pd.DataFrame([
+                {"項目": "設計費",               "比例(%)": f"{design_pct:.2f}",   "金額(元)": f"{design_f:,.0f}",       "基數": "決標金額",   "備註": "可調"},
+                {"項目": "統包施工費",           "比例(%)": "—",                   "金額(元)": f"{const_p:,.0f}",         "基數": "—",         "備註": "決標金額 − 設計費"},
+                {"項目": "專管及監造服務費",     "比例(%)": f"{pcm_pct:.2f}",      "金額(元)": f"{pcm_fee:,.0f}",         "基數": "統包施工費", "備註": "含耐震特別監督，可調"},
+                {"項目": "準備金",               "比例(%)": "2.00",                "金額(元)": f"{reserve_fee:,.0f}",     "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "物調款",               "比例(%)": f"{price_adj_pct:.2f}","金額(元)": f"{price_adj_fee:,.0f}",   "基數": "統包施工費", "備註": "可調"},
+                {"項目": "外管補助費",           "比例(%)": "1.00",                "金額(元)": f"{external_fee:,.0f}",    "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "公共藝術",             "比例(%)": "1.00",                "金額(元)": f"{public_art_fee:,.0f}",  "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "其他費用",             "比例(%)": "—",                   "金額(元)": f"{other_fee:,.0f}",       "基數": "—",         "備註": "手動輸入"},
+            ])
+            st.table(fee_breakdown_df)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("決標金額", f"{total_p:,.0f} 元")
+            c2.metric("統包施工費", f"{const_p:,.0f} 元")
+            c3.metric("各項費用合計", f"{total_all_fees:,.0f} 元")
 
         # --- 核心數據處理與模擬 ---
         start_dt = pd.to_datetime(start_d)
@@ -174,50 +239,38 @@ if active_file:
         p15, p85 = np.nanpercentile(sim_matrix, 15, axis=0), np.nanpercentile(sim_matrix, 85, axis=0)
         p25, p75 = np.nanpercentile(sim_matrix, 25, axis=0), np.nanpercentile(sim_matrix, 75, axis=0)
 
-  # --- 📈 3. 圖表渲染 (驗證版：含百分比顯示) ---
+        # --- 📈 3. 圖表渲染 ---
         def to_dates(curve): return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
         
         u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
         u_prog = np.concatenate([target_df["累計_norm"].values, prog_steps])
         s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
 
-        # 準備 Hover 數據
         hover_custom_data = []
         for i, d in enumerate(mean_c):
-            # 1. 取得當前點的平均進度 (y軸值)
             mean_prog = prog_steps[i]
-            
-            # 2. 透過插值找出在「同一天 d」時，樂觀與悲觀路徑對應的進度
-            # 注意：p10, p90 陣列儲存的是「達到某進度所需的天數」
             p10_prog = np.interp(d, p10, prog_steps)
             p90_prog = np.interp(d, p90, prog_steps)
             
-            # 3. 計算預估支付金額 (以 Mean 為基準)
             prev_d = max(0, d - 30)
             prog_now = np.interp(d * env_ratio, u_days, u_prog)
             prog_prev = np.interp(prev_d * env_ratio, u_days, u_prog)
             pay_amt = int(const_p * (prog_now - prog_prev) / 100)
-            
-            # 4. 計算價差金額 (P10進度 - P90進度)
             risk_gap_amt = int(const_p * (p10_prog - p90_prog) / 100)
             
-            # 儲存所有要顯示在鼠標上的變數
             hover_custom_data.append([
-                f"{pay_amt:,} 元",       # [0] 預估支付
-                f"{risk_gap_amt:,} 元",   # [1] 價差金額
-                f"{p10_prog:.2f}%",      # [2] 樂觀進度
-                f"{mean_prog:.2f}%",     # [3] 平均進度
-                f"{p90_prog:.2f}%"       # [4] 悲觀進度
+                f"{pay_amt:,} 元",
+                f"{risk_gap_amt:,} 元",
+                f"{p10_prog:.2f}%",
+                f"{mean_prog:.2f}%",
+                f"{p90_prog:.2f}%"
             ])
 
         fig = go.Figure()
-        
-        # 區間層
         fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.1)', line=dict(color='rgba(255,255,255,0)'), name='90% 信賴區間', hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=to_dates(p15)+to_dates(p85)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(241,196,15,0.15)', line=dict(color='rgba(255,255,255,0)'), name='70% 信賴區間', hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=to_dates(p25)+to_dates(p75)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(46,134,193,0.2)', line=dict(color='rgba(255,255,255,0)'), name='50% 信賴區間', hoverinfo='skip'))
         
-        # 主預測線
         fig.add_trace(go.Scatter(
             x=to_dates(mean_c), 
             y=prog_steps, 
@@ -333,10 +386,49 @@ if active_file:
                 ]))
             with col2:
                 st.write("#### 📥 報表下載")
+                # === 匯出多工作表 Excel ===
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    # Sheet 1: 金流分析
                     df_pay.to_excel(writer, sheet_name='金流分析', index=False)
-                st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(), file_name=f"{target_case_name}_預測.xlsx")
+                    
+                    # Sheet 2: 費用拆分
+                    fee_export_df = pd.DataFrame([
+                        {"項目": "決標金額",             "比例(%)": "",              "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
+                        {"項目": "設計費",               "比例(%)": design_pct,      "金額(元)": design_f,        "基數": "決標金額",   "備註": "可調"},
+                        {"項目": "統包施工費",           "比例(%)": "",              "金額(元)": const_p,         "基數": "",           "備註": "決標金額 − 設計費"},
+                        {"項目": "專管及監造服務費",     "比例(%)": pcm_pct,         "金額(元)": pcm_fee,         "基數": "統包施工費", "備註": "含耐震特別監督，可調"},
+                        {"項目": "準備金",               "比例(%)": 2.00,            "金額(元)": reserve_fee,     "基數": "統包施工費", "備註": "鎖定"},
+                        {"項目": "物調款",               "比例(%)": price_adj_pct,   "金額(元)": price_adj_fee,   "基數": "統包施工費", "備註": "可調"},
+                        {"項目": "外管補助費",           "比例(%)": 1.00,            "金額(元)": external_fee,    "基數": "統包施工費", "備註": "鎖定"},
+                        {"項目": "公共藝術",             "比例(%)": 1.00,            "金額(元)": public_art_fee,  "基數": "統包施工費", "備註": "鎖定"},
+                        {"項目": "其他費用",             "比例(%)": "",              "金額(元)": other_fee,       "基數": "",           "備註": "手動輸入"},
+                        {"項目": "─────────",           "比例(%)": "",              "金額(元)": "",              "基數": "",           "備註": ""},
+                        {"項目": "各項費用合計",         "比例(%)": "",              "金額(元)": total_all_fees,  "基數": "",           "備註": "設計費+專管+準備金+物調+外管+公共藝術+其他"},
+                    ])
+                    fee_export_df.to_excel(writer, sheet_name='費用拆分', index=False)
+                    
+                    # 設定欄寬
+                    workbook = writer.book
+                    money_fmt = workbook.add_format({'num_format': '#,##0'})
+                    pct_fmt = workbook.add_format({'num_format': '0.00'})
+                    
+                    ws_fee = writer.sheets['費用拆分']
+                    ws_fee.set_column('A:A', 22)
+                    ws_fee.set_column('B:B', 10, pct_fmt)
+                    ws_fee.set_column('C:C', 18, money_fmt)
+                    ws_fee.set_column('D:D', 14)
+                    ws_fee.set_column('E:E', 30)
+                    
+                    ws_pay = writer.sheets['金流分析']
+                    ws_pay.set_column('A:A', 22)
+                    ws_pay.set_column('B:B', 10)
+                    ws_pay.set_column('C:C', 14)
+                    ws_pay.set_column('D:D', 16, money_fmt)
+                    ws_pay.set_column('E:E', 10)
+                
+                st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(), 
+                                   file_name=f"{target_case_name}_預測.xlsx")
 
     else:
         st.error(f"找不到工作表「{target_case_name}」")
