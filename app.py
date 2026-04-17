@@ -246,24 +246,59 @@ if active_file:
         u_prog = np.concatenate([target_df["累計_norm"].values, prog_steps])
         s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
 
+        # === Hover 資料計算 ===
+        # 核心原則：當期(30天) vs 累計 分開算，且三條情境線各自回推自己的 30 天前進度
+        # 這樣每個數字的時間尺度都一致、可直接對照
+        PERIOD_DAYS = 30  # 當期 = 近 30 天（對齊下方每月付款表）
+
         hover_custom_data = []
-        for i, d in enumerate(mean_c):
-            mean_prog = prog_steps[i]
-            p10_prog = np.interp(d, p10, prog_steps)
-            p90_prog = np.interp(d, p90, prog_steps)
+        for i, d_mean in enumerate(mean_c):
+            # 目前這一點的「進度」（y 軸值）—— 三條線都指向同一個進度點
+            prog_now = prog_steps[i]
             
-            prev_d = max(0, d - 30)
-            prog_now = np.interp(d * env_ratio, u_days, u_prog)
-            prog_prev = np.interp(prev_d * env_ratio, u_days, u_prog)
-            pay_amt = int(const_p * (prog_now - prog_prev) / 100)
-            risk_gap_amt = int(const_p * (p10_prog - p90_prog) / 100)
+            # 三種情境在「達到此進度」所需的天數
+            d_p10 = p10[i]
+            d_p90 = p90[i]
+            # d_mean 本身就是 mean 情境下的天數
+            
+            # --- 🧮 累計金額 (到達此進度時，各情境已完成的金額) ---
+            # 注意：三條情境線在同一個 prog_now 下的累計「工程款」其實相同
+            # 差異來自「同一天」各情境進度不同 → 用 hover 日期 x 軸(mean 日期)當基準
+            cum_mean = const_p * prog_now / 100
+            # 若要問「在 mean 的這一天」，各情境分別累積到多少：
+            prog_p10_at_d = np.interp(d_mean, p10, prog_steps)  # mean 的這一天，樂觀已做到幾%
+            prog_p90_at_d = np.interp(d_mean, p90, prog_steps)  # mean 的這一天，悲觀已做到幾%
+            cum_p10 = const_p * prog_p10_at_d / 100
+            cum_p90 = const_p * prog_p90_at_d / 100
+            cum_gap = cum_p10 - cum_p90  # 正值代表樂觀領先
+            
+            # --- 📆 當期金額 (近 30 天，各情境各自計算) ---
+            # 每條線「這一天」的進度 vs 「30 天前」的進度差 → 乘以工程款基數
+            # 樂觀、悲觀各自用自己的曲線插值，不共用 mean 的時間
+            prog_mean_prev = np.interp(max(0, d_mean - PERIOD_DAYS), mean_c, prog_steps)
+            prog_p10_prev  = np.interp(max(0, d_p10  - PERIOD_DAYS), p10,    prog_steps)
+            prog_p90_prev  = np.interp(max(0, d_p90  - PERIOD_DAYS), p90,    prog_steps)
+            
+            pay_mean = const_p * (prog_now - prog_mean_prev) / 100
+            pay_p10  = const_p * (prog_now - prog_p10_prev)  / 100
+            pay_p90  = const_p * (prog_now - prog_p90_prev)  / 100
+            period_gap = pay_p10 - pay_p90  # 正值代表樂觀當期支付較多
             
             hover_custom_data.append([
-                f"{pay_amt:,} 元",
-                f"{risk_gap_amt:,} 元",
-                f"{p10_prog:.2f}%",
-                f"{mean_prog:.2f}%",
-                f"{p90_prog:.2f}%"
+                # [0-2] 進度驗證
+                f"{prog_p10_at_d:.2f}%",
+                f"{prog_now:.2f}%",
+                f"{prog_p90_at_d:.2f}%",
+                # [3-6] 當期金流（近 30 天）
+                f"{int(pay_p10):,} 元",
+                f"{int(pay_mean):,} 元",
+                f"{int(pay_p90):,} 元",
+                f"{int(period_gap):,} 元",
+                # [7-10] 累計金流（至本日）
+                f"{int(cum_p10):,} 元",
+                f"{int(cum_mean):,} 元",
+                f"{int(cum_p90):,} 元",
+                f"{int(cum_gap):,} 元",
             ])
 
         fig = go.Figure()
@@ -279,14 +314,22 @@ if active_file:
             line=dict(color='#3498db', width=3.5, dash='dash'),
             customdata=hover_custom_data,
             hovertemplate=(
-                "<b>📅 日期</b>: %{x|%Y-%m-%d}<br><br>" +
-                "<b>📈 進度驗證：</b><br>" +
-                "└ 樂觀 (P10): %{customdata[2]}<br>" +
-                "└ 平均 (Mean): %{customdata[3]}<br>" +
-                "└ 悲觀 (P90): %{customdata[4]}<br><br>" +
-                "<b>💰 金流預估：</b><br>" +
-                "└ 預估當期支付: %{customdata[0]}<br>" +
-                "└ 風險價差(樂觀-悲觀): <span style='color:red'>%{customdata[1]}</span>" +
+                "<b>📅 日期</b>: %{x|%Y-%m-%d}<br>" +
+                "<span style='color:#888'>(x 軸為 Mean 情境日期)</span><br><br>" +
+                "<b>📈 進度驗證 (本日 %)</b><br>" +
+                "└ 樂觀 (P10): %{customdata[0]}<br>" +
+                "└ 平均 (Mean): %{customdata[1]}<br>" +
+                "└ 悲觀 (P90): %{customdata[2]}<br><br>" +
+                "<b>📆 當期金流 (近 30 天)</b><br>" +
+                "└ 樂觀當期: %{customdata[3]}<br>" +
+                "└ 平均當期: %{customdata[4]}<br>" +
+                "└ 悲觀當期: %{customdata[5]}<br>" +
+                "└ <b>當期風險價差</b>: <span style='color:#e74c3c'>%{customdata[6]}</span><br><br>" +
+                "<b>📊 累計金流 (至本日)</b><br>" +
+                "└ 樂觀累計: %{customdata[7]}<br>" +
+                "└ 平均累計: %{customdata[8]}<br>" +
+                "└ 悲觀累計: %{customdata[9]}<br>" +
+                "└ <b>累計風險價差</b>: <span style='color:#e74c3c'>%{customdata[10]}</span>" +
                 "<extra></extra>"
             )
         ))
