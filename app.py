@@ -347,6 +347,8 @@ if active_file:
         st.markdown("---")
         st.subheader("💰 全週期金流分析與互動排程")
 
+        # === 📆 互動式期別編輯器 (設計費 / 外管 / 公共藝術 / 其他) ===
+        # 初始化 session_state - 四類費用各自有一張排程表
         if 'design_df' not in st.session_state:
             st.session_state.design_df = pd.DataFrame([
                 {"期別": "設計一期", "基準點": "合約起始", "相對月數": 3, "比例": 0.10},
@@ -355,38 +357,105 @@ if active_file:
                 {"期別": "設計四期", "基準點": "預計開工", "相對月數": 6, "比例": 0.45},
                 {"期別": "設計五期", "基準點": "預計完工", "相對月數": 1, "比例": 0.10},
             ])
+        if 'external_df' not in st.session_state:
+            st.session_state.external_df = pd.DataFrame([
+                {"期別": "外管補助", "基準點": "預計開工", "相對月數": 0, "比例": 1.00},
+            ])
+        if 'publicart_df' not in st.session_state:
+            st.session_state.publicart_df = pd.DataFrame([
+                {"期別": "公共藝術一期", "基準點": "預計開工", "相對月數": 6,  "比例": 0.50},
+                {"期別": "公共藝術二期", "基準點": "預計完工", "相對月數": 3,  "比例": 0.50},
+            ])
+        if 'other_df' not in st.session_state:
+            st.session_state.other_df = pd.DataFrame([
+                {"期別": "其他費用", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
+            ])
 
-        with st.expander("🛠️ 調整設計款支付時程", expanded=True):
-            edited_design_df = st.data_editor(
-                st.session_state.design_df,
-                column_config={
-                    "期別": st.column_config.TextColumn("款項名稱"),
-                    "基準點": st.column_config.SelectboxColumn("日期基準", options=["合約起始", "預計開工", "預計完工"]),
-                    "相對月數": st.column_config.NumberColumn("延後月數", min_value=0, max_value=120, step=1),
-                    "比例": st.column_config.NumberColumn("支付比例", min_value=0.0, max_value=1.0, format="%.2f")
-                },
-                num_rows="dynamic", use_container_width=True, key="design_editor_integrated"
-            )
-            st.session_state.design_df = edited_design_df
+        editor_config = {
+            "期別":   st.column_config.TextColumn("款項名稱"),
+            "基準點": st.column_config.SelectboxColumn("日期基準", options=["合約起始", "預計開工", "預計完工"]),
+            "相對月數": st.column_config.NumberColumn("延後月數", min_value=0, max_value=120, step=1),
+            "比例":   st.column_config.NumberColumn("支付比例", min_value=0.0, max_value=1.0, format="%.2f"),
+        }
+
+        with st.expander("🛠️ 調整自訂期別費用支付時程 (設計費 / 外管 / 公共藝術 / 其他)", expanded=True):
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                st.markdown(f"**✏️ 設計費**　總額 `{design_f:,.0f}` 元")
+                st.session_state.design_df = st.data_editor(
+                    st.session_state.design_df, column_config=editor_config,
+                    num_rows="dynamic", use_container_width=True, key="design_editor")
+                st.markdown(f"**🏗️ 外管補助費**　總額 `{external_fee:,.0f}` 元")
+                st.session_state.external_df = st.data_editor(
+                    st.session_state.external_df, column_config=editor_config,
+                    num_rows="dynamic", use_container_width=True, key="external_editor")
+            with ec2:
+                st.markdown(f"**🎨 公共藝術**　總額 `{public_art_fee:,.0f}` 元")
+                st.session_state.publicart_df = st.data_editor(
+                    st.session_state.publicart_df, column_config=editor_config,
+                    num_rows="dynamic", use_container_width=True, key="publicart_editor")
+                st.markdown(f"**📌 其他費用**　總額 `{other_fee:,.0f}` 元")
+                st.session_state.other_df = st.data_editor(
+                    st.session_state.other_df, column_config=editor_config,
+                    num_rows="dynamic", use_container_width=True, key="other_editor")
 
         mean_finish_dt = start_dt + timedelta(days=int(mean_c[-1] * env_ratio))
-        pay_data = []
-        for _, row in edited_design_df.iterrows():
-            base_ref = pd.to_datetime(contract_d) if row["基準點"] == "合約起始" else (pd.to_datetime(start_d) if row["基準點"] == "預計開工" else mean_finish_dt)
-            p_date = get_payment_date(get_month_end(base_ref + pd.DateOffset(months=int(row["相對月數"]))))
-            pay_data.append({"期別": row["期別"], "性質": "設計款", "支付日": p_date, "金額": int(design_f * row["比例"])})
 
+        # === 🧮 自訂期別費用排程（4 類，統一用長表存） ===
+        pay_data = []
+        for edited_df, total_amt, pay_kind in [
+            (st.session_state.design_df,    design_f,       "設計費"),
+            (st.session_state.external_df,  external_fee,   "外管補助"),
+            (st.session_state.publicart_df, public_art_fee, "公共藝術"),
+            (st.session_state.other_df,     other_fee,      "其他費用"),
+        ]:
+            for _, row in edited_df.iterrows():
+                base_ref = (pd.to_datetime(contract_d) if row["基準點"] == "合約起始"
+                            else pd.to_datetime(start_d) if row["基準點"] == "預計開工"
+                            else mean_finish_dt)
+                p_date = get_payment_date(get_month_end(base_ref + pd.DateOffset(months=int(row["相對月數"]))))
+                pay_data.append({
+                    "期別": row["期別"], "性質": pay_kind,
+                    "支付日": p_date, "金額": int(total_amt * row["比例"])
+                })
+
+        # === 🏗️ 每月 S-curve 撥款 (基數 = 施工+專管+準備金+物調 四項同步撥) ===
+        # 拆開記錄：一個月四筆，各費用類別一筆
+        scurve_components = [
+            ("施工費",    const_p),
+            ("專管監造",  pcm_fee),
+            ("準備金",    reserve_fee),
+            ("物調款",    price_adj_fee),
+        ]
+        scurve_base_total = sum(v for _, v in scurve_components)
+
+        monthly_scurve_rows = []  # 長表：每月每類別一列
         curr_m = pd.to_datetime(start_d).replace(day=1)
         prev_p = 0
-        while curr_m <= (mean_finish_dt + timedelta(days=90)): 
+        while curr_m <= (mean_finish_dt + timedelta(days=90)):
             m_end = get_month_end(curr_m)
             if m_end >= start_dt:
                 ref_day = (m_end - start_dt).days / env_ratio
                 cp = np.interp(ref_day, u_days / env_ratio, u_prog)
                 if cp > prev_p:
-                    amt = int(const_p * (cp - prev_p) / 100)
-                    if amt > 0:
-                        pay_data.append({"期別": f"工程估驗 {m_end.strftime('%Y/%m')}", "性質": "工程款", "支付日": get_payment_date(m_end), "金額": amt})
+                    period_ratio = (cp - prev_p) / 100
+                    pay_date = get_payment_date(m_end)
+                    month_label = m_end.strftime('%Y/%m')
+                    for comp_name, comp_base in scurve_components:
+                        amt = int(comp_base * period_ratio)
+                        if amt > 0:
+                            pay_data.append({
+                                "期別": f"工程估驗 {month_label} - {comp_name}",
+                                "性質": comp_name,
+                                "支付日": pay_date,
+                                "金額": amt,
+                            })
+                            monthly_scurve_rows.append({
+                                "月份": pay_date.strftime('%Y-%m'),
+                                "支付日": pay_date,
+                                "類別": comp_name,
+                                "金額": amt,
+                            })
                     prev_p = cp
             if prev_p >= 100: break
             curr_m += pd.DateOffset(months=1)
@@ -395,28 +464,70 @@ if active_file:
         df_pay['月份'] = df_pay['支付日'].dt.strftime('%Y-%m')
         df_monthly = df_pay.groupby('月份')['金額'].sum().reset_index().sort_values('月份')
 
+        # 每月 S-curve 樞紐表 (寬表)
+        if monthly_scurve_rows:
+            df_scurve_long = pd.DataFrame(monthly_scurve_rows)
+            df_scurve_pivot = df_scurve_long.pivot_table(
+                index="月份", columns="類別", values="金額", aggfunc='sum', fill_value=0
+            ).reset_index()
+            # 補齊可能缺少的欄位，並固定欄位順序
+            for col in ["施工費", "專管監造", "準備金", "物調款"]:
+                if col not in df_scurve_pivot.columns:
+                    df_scurve_pivot[col] = 0
+            df_scurve_pivot = df_scurve_pivot[["月份", "施工費", "專管監造", "準備金", "物調款"]]
+            df_scurve_pivot["當月合計"] = df_scurve_pivot[["施工費", "專管監造", "準備金", "物調款"]].sum(axis=1)
+        else:
+            df_scurve_pivot = pd.DataFrame(columns=["月份", "施工費", "專管監造", "準備金", "物調款", "當月合計"])
+
         # --- 樣式 TAB 切換 ---
         tab1, tab2, tab3 = st.tabs(["📊 每月支出趨勢", "📜 詳細金流明細", "📅 工期情境總結"])
 
         with tab1:
             fig_bar = go.Figure(data=[go.Bar(
-                x=df_monthly['月份'], y=df_monthly['金額'], 
+                x=df_monthly['月份'], y=df_monthly['金額'],
                 marker_color='#2ecc71',
-                text=[f"{v/10000:,.0f}萬" for v in df_monthly['金額']], 
+                text=[f"{v/10000:,.0f}萬" for v in df_monthly['金額']],
                 textposition='outside'
             )])
-            fig_bar.update_layout(title="<b>各月預計付款金額 (元)</b>", template="plotly_white", height=450)
+            fig_bar.update_layout(title="<b>各月預計付款金額 (元) - 含全部費用</b>",
+                                  template="plotly_white", height=450)
             st.plotly_chart(fig_bar, use_container_width=True)
 
         with tab2:
-            show_df = df_pay.sort_values("支付日").copy()
-            show_df["合約年度"] = show_df["支付日"].apply(lambda x: get_contract_year(x, contract_d))
-            for year in show_df["合約年度"].unique():
-                with st.expander(f"📅 {year} 明細", expanded=True):
-                    df_y = show_df[show_df["合約年度"] == year].copy()
-                    df_y["金額(元)"] = df_y["金額"].apply(lambda x: f"{x:,}")
-                    st.table(df_y[["支付日", "期別", "性質", "金額(元)"]])
-                    st.markdown(f"**💰 {year} 撥款總計： `{df_y['金額'].sum():,}` 元**")
+            st.markdown("#### 🏗️ 工程款按月明細（S-curve 撥款）")
+            st.caption(f"基數 = 施工費 + 專管監造 + 準備金 + 物調款 = **{scurve_base_total:,.0f}** 元　"
+                       f"每月按 S-curve 進度比例同步撥付此四項")
+
+            if not df_scurve_pivot.empty:
+                # 依合約年度分組顯示
+                df_scurve_pivot["合約年度"] = df_scurve_pivot["月份"].apply(
+                    lambda m: get_contract_year(pd.to_datetime(m + "-01"), contract_d)
+                )
+                for year in df_scurve_pivot["合約年度"].unique():
+                    with st.expander(f"📅 {year}（工程款）", expanded=True):
+                        df_y = df_scurve_pivot[df_scurve_pivot["合約年度"] == year].copy()
+                        df_show = df_y.drop(columns=["合約年度"]).copy()
+                        for col in ["施工費", "專管監造", "準備金", "物調款", "當月合計"]:
+                            df_show[col] = df_show[col].apply(lambda x: f"{int(x):,}")
+                        st.table(df_show)
+                        st.markdown(f"**💰 {year} 工程款小計： `{int(df_y['當月合計'].sum()):,}` 元**")
+            else:
+                st.info("無 S-curve 工程款資料")
+
+            st.markdown("---")
+            st.markdown("#### 📋 自訂期別費用（設計費／外管／公共藝術／其他）")
+            df_custom = df_pay[df_pay["性質"].isin(["設計費", "外管補助", "公共藝術", "其他費用"])].copy()
+            if not df_custom.empty:
+                df_custom = df_custom.sort_values("支付日")
+                df_custom["合約年度"] = df_custom["支付日"].apply(lambda x: get_contract_year(x, contract_d))
+                for year in df_custom["合約年度"].unique():
+                    with st.expander(f"📅 {year}（自訂費用）", expanded=True):
+                        df_y = df_custom[df_custom["合約年度"] == year].copy()
+                        df_y["金額(元)"] = df_y["金額"].apply(lambda x: f"{x:,}")
+                        st.table(df_y[["支付日", "期別", "性質", "金額(元)"]])
+                        st.markdown(f"**💰 {year} 自訂費用小計： `{df_y['金額'].sum():,}` 元**")
+            else:
+                st.info("無自訂期別費用")
 
         with tab3:
             col1, col2 = st.columns(2)
@@ -432,10 +543,20 @@ if active_file:
                 # === 匯出多工作表 Excel ===
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    # Sheet 1: 金流分析
+                    # Sheet 1: 金流分析 (長表全明細)
                     df_pay.to_excel(writer, sheet_name='金流分析', index=False)
-                    
-                    # Sheet 2: 費用拆分
+
+                    # Sheet 2: 按月工程款 (S-curve 樞紐寬表)
+                    export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
+                    if not export_scurve.empty:
+                        # 加總計列
+                        total_row = {"月份": "總計"}
+                        for c in ["施工費", "專管監造", "準備金", "物調款", "當月合計"]:
+                            total_row[c] = int(export_scurve[c].sum())
+                        export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
+                    export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
+
+                    # Sheet 3: 費用拆分
                     fee_export_df = pd.DataFrame([
                         {"項目": "決標金額",             "比例(%)": "",              "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
                         {"項目": "設計費",               "比例(%)": design_pct,      "金額(元)": design_f,        "基數": "決標金額",   "備註": "可調"},
@@ -447,30 +568,40 @@ if active_file:
                         {"項目": "公共藝術",             "比例(%)": 1.00,            "金額(元)": public_art_fee,  "基數": "統包施工費", "備註": "鎖定"},
                         {"項目": "其他費用",             "比例(%)": "",              "金額(元)": other_fee,       "基數": "",           "備註": "手動輸入"},
                         {"項目": "─────────",           "比例(%)": "",              "金額(元)": "",              "基數": "",           "備註": ""},
+                        {"項目": "S-curve 基數",         "比例(%)": "",              "金額(元)": scurve_base_total, "基數": "",         "備註": "施工+專管+準備金+物調"},
                         {"項目": "各項費用合計",         "比例(%)": "",              "金額(元)": total_all_fees,  "基數": "",           "備註": "設計費+專管+準備金+物調+外管+公共藝術+其他"},
                     ])
                     fee_export_df.to_excel(writer, sheet_name='費用拆分', index=False)
-                    
-                    # 設定欄寬
+
+                    # 格式設定
                     workbook = writer.book
                     money_fmt = workbook.add_format({'num_format': '#,##0'})
                     pct_fmt = workbook.add_format({'num_format': '0.00'})
-                    
+                    bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'bg_color': '#FFF3CD'})
+
                     ws_fee = writer.sheets['費用拆分']
                     ws_fee.set_column('A:A', 22)
                     ws_fee.set_column('B:B', 10, pct_fmt)
                     ws_fee.set_column('C:C', 18, money_fmt)
                     ws_fee.set_column('D:D', 14)
                     ws_fee.set_column('E:E', 30)
-                    
+
                     ws_pay = writer.sheets['金流分析']
-                    ws_pay.set_column('A:A', 22)
-                    ws_pay.set_column('B:B', 10)
+                    ws_pay.set_column('A:A', 28)
+                    ws_pay.set_column('B:B', 12)
                     ws_pay.set_column('C:C', 14)
                     ws_pay.set_column('D:D', 16, money_fmt)
                     ws_pay.set_column('E:E', 10)
-                
-                st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(), 
+
+                    ws_sc = writer.sheets['按月工程款']
+                    ws_sc.set_column('A:A', 12)
+                    ws_sc.set_column('B:F', 16, money_fmt)
+                    # 總計列加底色
+                    if not export_scurve.empty:
+                        last_row = len(export_scurve)  # 含 header
+                        ws_sc.set_row(last_row, None, bold_fmt)
+
+                st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(),
                                    file_name=f"{target_case_name}_預測.xlsx")
 
     else:
