@@ -581,6 +581,7 @@ if active_file:
                     with st.expander(f"📅 {year}（自訂費用）", expanded=True):
                         df_y = df_custom[df_custom["合約年度"] == year].copy()
                         df_y["金額(元)"] = df_y["金額"].apply(lambda x: f"{x:,}")
+                        df_y["支付日"] = pd.to_datetime(df_y["支付日"]).dt.strftime('%Y-%m-%d')
                         st.table(df_y[["支付日", "期別", "性質", "金額(元)"]])
                         st.markdown(f"**💰 {year} 自訂費用小計： `{df_y['金額'].sum():,}` 元**")
             else:
@@ -643,10 +644,7 @@ if active_file:
                 # === 匯出多工作表 Excel ===
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    # Sheet 1: 金流分析 (長表全明細)
-                    df_pay.to_excel(writer, sheet_name='金流分析', index=False)
-
-                    # Sheet 2: 按月工程款 (S-curve 樞紐寬表)
+                    # Sheet 1: 按月工程款 (S-curve 樞紐寬表)
                     export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
                     if not export_scurve.empty:
                         # 加總計列
@@ -656,7 +654,7 @@ if active_file:
                         export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
                     export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
 
-                    # Sheet 2.5: 寬表總覽（每期一列，金額橫向分布）
+                    # Sheet 2: 寬表總覽（每期一列，金額橫向分布）
                     export_wide = df_wide.copy()
                     if not export_wide.empty:
                         # 支付日轉為日期字串
@@ -674,7 +672,7 @@ if active_file:
                         export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
                     export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
 
-                    # Sheet 3: 費用拆分
+                    # Sheet 3: 費用拆分（參考用）
                     fee_export_df = pd.DataFrame([
                         {"項目": "決標金額",             "比例(%)": "",              "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
                         {"項目": "設計費",               "比例(%)": design_pct,      "金額(元)": design_f,        "基數": "決標金額",   "備註": "可調"},
@@ -703,13 +701,6 @@ if active_file:
                     ws_fee.set_column('C:C', 18, money_fmt)
                     ws_fee.set_column('D:D', 14)
                     ws_fee.set_column('E:E', 30)
-
-                    ws_pay = writer.sheets['金流分析']
-                    ws_pay.set_column('A:A', 28)
-                    ws_pay.set_column('B:B', 12)
-                    ws_pay.set_column('C:C', 14)
-                    ws_pay.set_column('D:D', 16, money_fmt)
-                    ws_pay.set_column('E:E', 10)
 
                     ws_sc = writer.sheets['按月工程款']
                     ws_sc.set_column('A:A', 12)
