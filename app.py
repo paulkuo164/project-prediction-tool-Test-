@@ -479,8 +479,65 @@ if active_file:
         else:
             df_scurve_pivot = pd.DataFrame(columns=["月份", "施工費", "專管監造", "準備金", "物調款", "當月合計"])
 
+        # === 📑 寬表總覽：每期一列，金額橫向分到對應費用欄位 ===
+        # 欄位順序：期別 | 設計費 | 外管補助 | 公共藝術 | 其他費用 | 專管監造 | 準備金 | 物調款 | 施工費 | 支付日 | 金額 | 月份
+        WIDE_COLS = ["期別", "設計費", "外管補助", "公共藝術", "其他費用",
+                     "專管監造", "準備金", "物調款", "施工費", "支付日", "金額", "月份"]
+        # 「性質 → 對應欄位」對照
+        KIND_TO_COL = {
+            "設計費": "設計費", "外管補助": "外管補助",
+            "公共藝術": "公共藝術", "其他費用": "其他費用",
+            "施工費": "施工費", "專管監造": "專管監造",
+            "準備金": "準備金", "物調款": "物調款",
+        }
+
+        wide_rows = []
+
+        # (1) 自訂期別費用：一列只填一個欄位
+        df_custom_src = df_pay[df_pay["性質"].isin(
+            ["設計費", "外管補助", "公共藝術", "其他費用"])].copy()
+        for _, r in df_custom_src.iterrows():
+            row = {c: "" for c in WIDE_COLS}
+            row["期別"]   = r["期別"]
+            row["支付日"] = r["支付日"]
+            row["月份"]   = r["支付日"].strftime('%Y-%m')
+            row["金額"]   = int(r["金額"])
+            col_name = KIND_TO_COL.get(r["性質"])
+            if col_name:
+                row[col_name] = int(r["金額"])
+            wide_rows.append(row)
+
+        # (2) 工程估驗：同一期 4 欄位同時有值 → 用 (月份, 支付日) 去重群組
+        df_scurve_src = df_pay[df_pay["性質"].isin(
+            ["施工費", "專管監造", "準備金", "物調款"])].copy()
+        if not df_scurve_src.empty:
+            # 從「期別」字串抽出 YYYY/MM（格式固定為 "工程估驗 YYYY/MM - 類別"）
+            df_scurve_src["月份標籤"] = df_scurve_src["期別"].str.extract(r'工程估驗\s+(\d{4}/\d{2})')[0]
+            for (month_label, pay_date), grp in df_scurve_src.groupby(["月份標籤", "支付日"]):
+                row = {c: "" for c in WIDE_COLS}
+                row["期別"]   = f"工程估驗 {month_label}"
+                row["支付日"] = pay_date
+                row["月份"]   = pay_date.strftime('%Y-%m')
+                total_amt = 0
+                for _, r in grp.iterrows():
+                    col_name = KIND_TO_COL.get(r["性質"])
+                    if col_name:
+                        row[col_name] = int(r["金額"])
+                        total_amt += int(r["金額"])
+                row["金額"] = total_amt
+                wide_rows.append(row)
+
+        df_wide = pd.DataFrame(wide_rows, columns=WIDE_COLS)
+        if not df_wide.empty:
+            df_wide = df_wide.sort_values("支付日").reset_index(drop=True)
+
         # --- 樣式 TAB 切換 ---
-        tab1, tab2, tab3 = st.tabs(["📊 每月支出趨勢", "📜 詳細金流明細", "📅 工期情境總結"])
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📊 每月支出趨勢",
+            "📜 詳細金流明細",
+            "📑 寬表總覽",
+            "📅 工期情境總結",
+        ])
 
         with tab1:
             fig_bar = go.Figure(data=[go.Bar(
@@ -530,6 +587,49 @@ if active_file:
                 st.info("無自訂期別費用")
 
         with tab3:
+            st.markdown("#### 📑 寬表總覽")
+            st.caption("每期一列，金額橫向分布到對應費用欄位；工程估驗為合併列，四個欄位同時有值")
+
+            if df_wide.empty:
+                st.info("尚無任何期別資料")
+            else:
+                # 依合約年度分組摺疊
+                df_wide_disp = df_wide.copy()
+                df_wide_disp["合約年度"] = df_wide_disp["支付日"].apply(
+                    lambda x: get_contract_year(x, contract_d))
+
+                # 欄位 → 顯示用格式 (千分位)
+                amount_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
+                               "專管監造", "準備金", "物調款", "施工費", "金額"]
+
+                def _fmt(v):
+                    if v == "" or v is None: return ""
+                    try:
+                        return f"{int(v):,}"
+                    except Exception:
+                        return str(v)
+
+                for year in df_wide_disp["合約年度"].unique():
+                    df_y = df_wide_disp[df_wide_disp["合約年度"] == year].copy()
+                    with st.expander(f"📅 {year}", expanded=True):
+                        df_show = df_y.drop(columns=["合約年度"]).copy()
+                        # 支付日轉日期字串
+                        df_show["支付日"] = pd.to_datetime(df_show["支付日"]).dt.strftime('%Y-%m-%d')
+                        # 金額欄位格式化
+                        for c in amount_cols:
+                            df_show[c] = df_show[c].apply(_fmt)
+                        st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+                        # 年度小計
+                        yearly_sum = int(pd.to_numeric(df_y["金額"], errors='coerce').fillna(0).sum())
+                        st.markdown(f"**💰 {year} 合計： `{yearly_sum:,}` 元**")
+
+                # 全案總計
+                total_sum = int(pd.to_numeric(df_wide["金額"], errors='coerce').fillna(0).sum())
+                st.markdown("---")
+                st.markdown(f"### 🏁 全案總計： `{total_sum:,}` 元")
+
+        with tab4:
             col1, col2 = st.columns(2)
             with col1:
                 st.write("#### 🗓️ 關鍵里程碑預估")
@@ -555,6 +655,24 @@ if active_file:
                             total_row[c] = int(export_scurve[c].sum())
                         export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
                     export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
+
+                    # Sheet 2.5: 寬表總覽（每期一列，金額橫向分布）
+                    export_wide = df_wide.copy()
+                    if not export_wide.empty:
+                        # 支付日轉為日期字串
+                        export_wide["支付日"] = pd.to_datetime(export_wide["支付日"]).dt.strftime('%Y-%m-%d')
+                        # 空字串改成 0 再放入，方便 Excel 做欄位加總
+                        amt_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
+                                    "專管監造", "準備金", "物調款", "施工費", "金額"]
+                        for c in amt_cols:
+                            export_wide[c] = pd.to_numeric(export_wide[c], errors='coerce').fillna(0).astype(int)
+                        # 加總計列
+                        total_row = {c: "" for c in WIDE_COLS}
+                        total_row["期別"] = "總計"
+                        for c in amt_cols:
+                            total_row[c] = int(export_wide[c].sum())
+                        export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
+                    export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
 
                     # Sheet 3: 費用拆分
                     fee_export_df = pd.DataFrame([
@@ -600,6 +718,16 @@ if active_file:
                     if not export_scurve.empty:
                         last_row = len(export_scurve)  # 含 header
                         ws_sc.set_row(last_row, None, bold_fmt)
+
+                    ws_wide = writer.sheets['寬表總覽']
+                    ws_wide.set_column('A:A', 24)           # 期別
+                    ws_wide.set_column('B:I', 14, money_fmt) # 8 個金額欄位
+                    ws_wide.set_column('J:J', 13)            # 支付日
+                    ws_wide.set_column('K:K', 16, money_fmt) # 金額(小計)
+                    ws_wide.set_column('L:L', 10)            # 月份
+                    if not export_wide.empty:
+                        last_row_w = len(export_wide)
+                        ws_wide.set_row(last_row_w, None, bold_fmt)
 
                 st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(),
                                    file_name=f"{target_case_name}_預測.xlsx")
