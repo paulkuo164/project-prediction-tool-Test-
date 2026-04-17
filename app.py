@@ -7,31 +7,31 @@ import calendar
 import warnings
 import io
 import os
-
-
+ 
+ 
 st.set_page_config(page_title="工程金流預測儀表板", layout="wide")
-
+ 
 # 在這裡加入您的 LOGO
 st.logo("logo.png", link="https://www.hurc.org.tw/hurc/hpage")
-
+ 
 # ===== 🤐 系統設定 =====
 warnings.filterwarnings('ignore')
 np.seterr(divide='ignore', invalid='ignore')
-
+ 
 st.title("🏗️ 工程進度預測與金流預估")
-
+ 
 # ===== 🛠️ 1. 核心邏輯函式 =====
 def get_month_end(dt):
     if pd.isna(dt) or dt is None: return None
     if isinstance(dt, str): dt = pd.to_datetime(dt)
     last_day = calendar.monthrange(dt.year, dt.month)[1]
     return dt.replace(day=last_day)
-
+ 
 def get_payment_date(dt):
     if pd.isna(dt) or dt is None: return None
     target_date = (pd.to_datetime(dt).replace(day=1) + pd.DateOffset(months=2))
     return target_date.replace(day=5)
-
+ 
 def get_contract_year(target_date, contract_start_date):
     if pd.isna(target_date) or target_date is None: return "未知年度"
     t_dt = pd.to_datetime(target_date)
@@ -39,7 +39,7 @@ def get_contract_year(target_date, contract_start_date):
     months_delta = (t_dt.year - s_dt.year) * 12 + (t_dt.month - s_dt.month)
     year_num = (months_delta // 12) + 1
     return f"第 {int(year_num)} 年度"
-
+ 
 def clean_and_process(df, base_start_date=None):
     df.columns = [str(c).strip() for c in df.columns]
     date_candidates = [c for c in df.columns if any(k in c for k in ["日", "期"])]
@@ -55,18 +55,18 @@ def clean_and_process(df, base_start_date=None):
     df["累計_norm"] = (df[cum_col] / (max_p if max_p > 0 else 1)) * 100
     df["天數_norm"] = (df["天數"] / (df["天數"].max() if df["天數"].max() > 0 else 1)) * 100
     return df, date_col, cum_col, actual_start
-
+ 
 # ===== 📂 2. 資料來源與廠商績效抓取 =====
 st.sidebar.header("📂 資料來源")
 default_file = "歷史案件資料(工期+金額)改.xlsx"
 has_internal = os.path.exists(default_file)
-
+ 
 if has_internal:
     data_option = st.sidebar.radio("數據源", ["使用內建歷史檔", "手動上傳新檔案"])
     active_file = default_file if data_option == "使用內建歷史檔" else st.sidebar.file_uploader("上傳 Excel", type=["xlsx"])
 else:
     active_file = st.sidebar.file_uploader("上傳歷史案件 Excel", type=["xlsx"])
-
+ 
 if active_file:
     xls = pd.ExcelFile(active_file)
     
@@ -90,7 +90,7 @@ if active_file:
             
     df_perf = pd.DataFrame(perf_list)
     perf_summary = df_perf.groupby(['name', 'type'])['ratio'].mean().to_dict() if not df_perf.empty else {}
-
+ 
     target_case_name = st.sidebar.text_input("目標案件工作表", value="平均預測")
     
     if target_case_name in xls.sheet_names:
@@ -158,7 +158,7 @@ if active_file:
         start_d = st.sidebar.date_input("預計開工日期", value=contract_d + timedelta(days=365))
         manual_dur = st.sidebar.number_input("基準預期施工總天數", value=1100)
         num_sims = st.sidebar.slider("蒙地卡羅模擬次數", 100, 1000, 400)
-
+ 
         # --- ✨ 廠商風險修正連動 ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("⚖️ 風險修正係數 (廠商)")
@@ -173,7 +173,7 @@ if active_file:
         use_env_adj = st.sidebar.toggle("啟用風險修正係數", value=True if r_vals else False)
         env_ratio = st.sidebar.slider("修正倍率", 0.5, 2.0, float(vendor_suggested)) if use_env_adj else 1.0
         use_protection = st.sidebar.toggle("啟動進度保護機制", value=True)
-
+ 
         # === 📋 主畫面：費用拆分摘要 ===
         with st.expander("💼 本案費用結構拆分（點擊展開/收合）", expanded=False):
             fee_breakdown_df = pd.DataFrame([
@@ -191,7 +191,7 @@ if active_file:
             c1.metric("決標金額", f"{total_p:,.0f} 元")
             c2.metric("統包施工費", f"{const_p:,.0f} 元")
             c3.metric("各項費用合計", f"{total_all_fees:,.0f} 元")
-
+ 
         # --- 核心數據處理與模擬 ---
         start_dt = pd.to_datetime(start_d)
         target_df, date_col, cum_col, _ = clean_and_process(pd.read_excel(xls, target_case_name), start_dt)
@@ -211,12 +211,12 @@ if active_file:
         top_names = [n for n, _ in sorted(case_info.items(), key=lambda x: x[1]['similarity'], reverse=True)[:4]]
         weights = np.array([case_info[n]['similarity'] for n in top_names])**2
         weights /= weights.sum()
-
+ 
         last_p = target_df["累計_norm"].iloc[-1]
         last_d = (target_df[date_col].iloc[-1] - start_dt).days if last_p > 0 else 0
         prog_steps = np.linspace(last_p, 100, 101)
         sim_matrix = []
-
+ 
         for _ in range(num_sims):
             curve_days, curr_d = [], last_d
             for l, h in zip(np.linspace(last_p, 90, 10), np.linspace(last_p+10, 100, 10)):
@@ -232,25 +232,25 @@ if active_file:
                 if curve_days: sim_matrix.append(np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days))
             else:
                 sim_matrix.append(np.interp(prog_steps, np.linspace(last_p, 100, len(curve_days)), curve_days) if curve_days else np.zeros_like(prog_steps))
-
+ 
         sim_matrix = np.atleast_2d(sim_matrix)
         mean_c = np.nanmean(sim_matrix, axis=0)
         p10, p90 = np.nanpercentile(sim_matrix, 10, axis=0), np.nanpercentile(sim_matrix, 90, axis=0)
         p15, p85 = np.nanpercentile(sim_matrix, 15, axis=0), np.nanpercentile(sim_matrix, 85, axis=0)
         p25, p75 = np.nanpercentile(sim_matrix, 25, axis=0), np.nanpercentile(sim_matrix, 75, axis=0)
-
+ 
         # --- 📈 3. 圖表渲染 ---
         def to_dates(curve): return [start_dt + timedelta(days=int(d * env_ratio)) for d in curve]
         
         u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
         u_prog = np.concatenate([target_df["累計_norm"].values, prog_steps])
         s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
-
+ 
         # === Hover 資料計算 ===
         # 核心原則：當期(30天) vs 累計 分開算，且三條情境線各自回推自己的 30 天前進度
         # 這樣每個數字的時間尺度都一致、可直接對照
         PERIOD_DAYS = 30  # 當期 = 近 30 天（對齊下方每月付款表）
-
+ 
         hover_custom_data = []
         for i, d_mean in enumerate(mean_c):
             # 目前這一點的「進度」（y 軸值）—— 三條線都指向同一個進度點
@@ -300,7 +300,7 @@ if active_file:
                 f"{int(cum_p90):,} 元",
                 f"{int(cum_gap):,} 元",
             ])
-
+ 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=to_dates(p10)+to_dates(p90)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(149,165,166,0.1)', line=dict(color='rgba(255,255,255,0)'), name='90% 信賴區間', hoverinfo='skip'))
         fig.add_trace(go.Scatter(x=to_dates(p15)+to_dates(p85)[::-1], y=prog_steps.tolist()+prog_steps[::-1].tolist(), fill='toself', fillcolor='rgba(241,196,15,0.15)', line=dict(color='rgba(255,255,255,0)'), name='70% 信賴區間', hoverinfo='skip'))
@@ -342,11 +342,11 @@ if active_file:
             legend=dict(orientation="h", y=1.1)
         )
         st.plotly_chart(fig, use_container_width=True)
-
+ 
         # === 💰 第二部分：全週期金流分析 ===
         st.markdown("---")
         st.subheader("💰 全週期金流分析與互動排程")
-
+ 
         # === 📆 互動式期別編輯器 (設計費 / 外管 / 公共藝術 / 其他) ===
         # 初始化 session_state - 四類費用各自有一張排程表
         if 'design_df' not in st.session_state:
@@ -370,14 +370,14 @@ if active_file:
             st.session_state.other_df = pd.DataFrame([
                 {"期別": "其他費用", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
             ])
-
+ 
         editor_config = {
             "期別":   st.column_config.TextColumn("款項名稱"),
             "基準點": st.column_config.SelectboxColumn("日期基準", options=["合約起始", "預計開工", "預計完工"]),
             "相對月數": st.column_config.NumberColumn("延後月數", min_value=0, max_value=120, step=1),
             "比例":   st.column_config.NumberColumn("支付比例", min_value=0.0, max_value=1.0, format="%.2f"),
         }
-
+ 
         with st.expander("🛠️ 調整自訂期別費用支付時程 (設計費 / 外管 / 公共藝術 / 其他)", expanded=True):
             ec1, ec2 = st.columns(2)
             with ec1:
@@ -398,9 +398,9 @@ if active_file:
                 st.session_state.other_df = st.data_editor(
                     st.session_state.other_df, column_config=editor_config,
                     num_rows="dynamic", use_container_width=True, key="other_editor")
-
+ 
         mean_finish_dt = start_dt + timedelta(days=int(mean_c[-1] * env_ratio))
-
+ 
         # === 🧮 自訂期別費用排程（4 類，統一用長表存） ===
         pay_data = []
         for edited_df, total_amt, pay_kind in [
@@ -418,7 +418,7 @@ if active_file:
                     "期別": row["期別"], "性質": pay_kind,
                     "支付日": p_date, "金額": int(total_amt * row["比例"])
                 })
-
+ 
         # === 🏗️ 每月 S-curve 撥款 (基數 = 施工+專管+物調 三項同步撥) ===
         # 拆開記錄：一個月三筆，各費用類別一筆
         # 註：準備金不參與 S-curve 撥款（另行編列運用）
@@ -428,7 +428,7 @@ if active_file:
             ("物調款",    price_adj_fee),
         ]
         scurve_base_total = sum(v for _, v in scurve_components)
-
+ 
         monthly_scurve_rows = []  # 長表：每月每類別一列
         curr_m = pd.to_datetime(start_d).replace(day=1)
         prev_p = 0
@@ -461,11 +461,11 @@ if active_file:
                     prev_p = cp
             if prev_p >= 100: break
             curr_m += pd.DateOffset(months=1)
-
+ 
         df_pay = pd.DataFrame(pay_data)
         df_pay['月份'] = df_pay['支付日'].dt.strftime('%Y-%m')
         df_monthly = df_pay.groupby('月份')['金額'].sum().reset_index().sort_values('月份')
-
+ 
         # 每月 S-curve 樞紐表 (寬表)
         if monthly_scurve_rows:
             df_scurve_long = pd.DataFrame(monthly_scurve_rows)
@@ -487,7 +487,7 @@ if active_file:
             df_scurve_pivot = df_scurve_pivot[["月份", "當月進度", "施工費", "專管監造", "物調款", "當月合計"]]
         else:
             df_scurve_pivot = pd.DataFrame(columns=["月份", "當月進度", "施工費", "專管監造", "物調款", "當月合計"])
-
+ 
         # === 📑 寬表總覽：每期一列，金額橫向分到對應費用欄位 ===
         # 欄位順序：期別 | 設計費 | 外管補助 | 公共藝術 | 其他費用 | 專管監造 | 物調款 | 施工費 | 支付日 | 金額 | 月份
         WIDE_COLS = ["期別", "設計費", "外管補助", "公共藝術", "其他費用",
@@ -499,9 +499,9 @@ if active_file:
             "施工費": "施工費", "專管監造": "專管監造",
             "物調款": "物調款",
         }
-
+ 
         wide_rows = []
-
+ 
         # (1) 自訂期別費用：一列只填一個欄位
         df_custom_src = df_pay[df_pay["性質"].isin(
             ["設計費", "外管補助", "公共藝術", "其他費用"])].copy()
@@ -515,7 +515,7 @@ if active_file:
             if col_name:
                 row[col_name] = int(r["金額"])
             wide_rows.append(row)
-
+ 
         # (2) 工程估驗：同一期 3 欄位同時有值 → 用 (月份, 支付日) 去重群組
         df_scurve_src = df_pay[df_pay["性質"].isin(
             ["施工費", "專管監造", "物調款"])].copy()
@@ -535,11 +535,11 @@ if active_file:
                         total_amt += int(r["金額"])
                 row["金額"] = total_amt
                 wide_rows.append(row)
-
+ 
         df_wide = pd.DataFrame(wide_rows, columns=WIDE_COLS)
         if not df_wide.empty:
             df_wide = df_wide.sort_values("支付日").reset_index(drop=True)
-
+ 
         # --- 樣式 TAB 切換 ---
         tab1, tab2, tab3, tab4 = st.tabs([
             "📊 每月支出趨勢",
@@ -547,7 +547,7 @@ if active_file:
             "📑 寬表總覽",
             "📅 工期情境總結",
         ])
-
+ 
         with tab1:
             fig_bar = go.Figure(data=[go.Bar(
                 x=df_monthly['月份'], y=df_monthly['金額'],
@@ -558,12 +558,12 @@ if active_file:
             fig_bar.update_layout(title="<b>各月預計付款金額 (元) - 含全部費用</b>",
                                   template="plotly_white", height=450)
             st.plotly_chart(fig_bar, use_container_width=True)
-
+ 
         with tab2:
             st.markdown("#### 🏗️ 工程款按月明細（S-curve 撥款）")
             st.caption(f"基數 = 施工費 + 專管監造 + 物調款 = **{scurve_base_total:,.0f}** 元　"
                        f"每月按 S-curve 進度比例同步撥付此三項（準備金不參與 S-curve 撥款）")
-
+ 
             if not df_scurve_pivot.empty:
                 # 依合約年度分組顯示
                 df_scurve_pivot["合約年度"] = df_scurve_pivot["月份"].apply(
@@ -582,7 +582,7 @@ if active_file:
                         st.markdown(f"**💰 {year} 工程款小計： `{int(df_y['當月合計'].sum()):,}` 元**")
             else:
                 st.info("無 S-curve 工程款資料")
-
+ 
             st.markdown("---")
             st.markdown("#### 📋 自訂期別費用（設計費／外管／公共藝術／其他）")
             df_custom = df_pay[df_pay["性質"].isin(["設計費", "外管補助", "公共藝術", "其他費用"])].copy()
@@ -598,11 +598,11 @@ if active_file:
                         st.markdown(f"**💰 {year} 自訂費用小計： `{df_y['金額'].sum():,}` 元**")
             else:
                 st.info("無自訂期別費用")
-
+ 
         with tab3:
             st.markdown("#### 📑 寬表總覽")
             st.caption("每期一列，金額橫向分布到對應費用欄位；工程估驗為合併列，三個欄位（施工費/專管監造/物調款）同時有值")
-
+ 
             if df_wide.empty:
                 st.info("尚無任何期別資料")
             else:
@@ -610,18 +610,18 @@ if active_file:
                 df_wide_disp = df_wide.copy()
                 df_wide_disp["合約年度"] = df_wide_disp["支付日"].apply(
                     lambda x: get_contract_year(x, contract_d))
-
+ 
                 # 欄位 → 顯示用格式 (千分位)
                 amount_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
                                "專管監造", "物調款", "施工費", "金額"]
-
+ 
                 def _fmt(v):
                     if v == "" or v is None: return ""
                     try:
                         return f"{int(v):,}"
                     except Exception:
                         return str(v)
-
+ 
                 for year in df_wide_disp["合約年度"].unique():
                     df_y = df_wide_disp[df_wide_disp["合約年度"] == year].copy()
                     with st.expander(f"📅 {year}", expanded=True):
@@ -632,16 +632,16 @@ if active_file:
                         for c in amount_cols:
                             df_show[c] = df_show[c].apply(_fmt)
                         st.dataframe(df_show, use_container_width=True, hide_index=True)
-
+ 
                         # 年度小計
                         yearly_sum = int(pd.to_numeric(df_y["金額"], errors='coerce').fillna(0).sum())
                         st.markdown(f"**💰 {year} 合計： `{yearly_sum:,}` 元**")
-
+ 
                 # 全案總計
                 total_sum = int(pd.to_numeric(df_wide["金額"], errors='coerce').fillna(0).sum())
                 st.markdown("---")
                 st.markdown(f"### 🏁 全案總計： `{total_sum:,}` 元")
-
+ 
         with tab4:
             col1, col2 = st.columns(2)
             with col1:
@@ -673,7 +673,7 @@ if active_file:
                             total_row[c] = int(export_wide[c].sum())
                         export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
                     export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
-
+ 
                     # Sheet 2: 按月工程款 (S-curve 樞紐寬表)
                     export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
                     if not export_scurve.empty:
@@ -685,7 +685,7 @@ if active_file:
                             total_row[c] = int(export_scurve[c].sum())
                         export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
                     export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
-
+ 
                     # Sheet 3: 費用拆分（參考用）
                     fee_export_df = pd.DataFrame([
                         {"項目": "決標金額",             "比例(%)": "",              "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
@@ -702,20 +702,20 @@ if active_file:
                         {"項目": "各項費用合計",         "比例(%)": "",              "金額(元)": total_all_fees,  "基數": "",           "備註": "設計費+專管+準備金+物調+外管+公共藝術+其他"},
                     ])
                     fee_export_df.to_excel(writer, sheet_name='費用拆分', index=False)
-
+ 
                     # 格式設定
                     workbook = writer.book
                     money_fmt = workbook.add_format({'num_format': '#,##0'})
                     pct_fmt = workbook.add_format({'num_format': '0.00'})
                     bold_fmt = workbook.add_format({'bold': True, 'num_format': '#,##0', 'bg_color': '#FFF3CD'})
-
+ 
                     ws_fee = writer.sheets['費用拆分']
                     ws_fee.set_column('A:A', 22)
                     ws_fee.set_column('B:B', 10, pct_fmt)
                     ws_fee.set_column('C:C', 18, money_fmt)
                     ws_fee.set_column('D:D', 14)
                     ws_fee.set_column('E:E', 30)
-
+ 
                     ws_sc = writer.sheets['按月工程款']
                     ws_sc.set_column('A:A', 12)       # 月份
                     ws_sc.set_column('B:B', 12)       # 當月進度（字串）
@@ -724,7 +724,7 @@ if active_file:
                     if not export_scurve.empty:
                         last_row = len(export_scurve)  # 含 header
                         ws_sc.set_row(last_row, None, bold_fmt)
-
+ 
                     ws_wide = writer.sheets['寬表總覽']
                     ws_wide.set_column('A:A', 24)           # 期別
                     ws_wide.set_column('B:H', 14, money_fmt) # 7 個金額欄位
@@ -734,10 +734,10 @@ if active_file:
                     if not export_wide.empty:
                         last_row_w = len(export_wide)
                         ws_wide.set_row(last_row_w, None, bold_fmt)
-
+ 
                 st.download_button("📥 下載預測報表 (.xlsx)", data=buffer.getvalue(),
                                    file_name=f"{target_case_name}_預測.xlsx")
-
+ 
     else:
         st.error(f"找不到工作表「{target_case_name}」")
 else:
