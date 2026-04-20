@@ -358,17 +358,17 @@ if active_file:
                 {"期別": "設計五期", "基準點": "預計完工", "相對月數": 1, "比例": 0.10},
             ])
            if 'external_df' not in st.session_state:
-               st.session_state.external_df = pd.DataFrame([
-                   {"期別": "外管補助", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
-               ])
-           if 'publicart_df' not in st.session_state:
-               st.session_state.publicart_df = pd.DataFrame([
-                   {"期別": "公共藝術", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
-               ])
-           if 'other_df' not in st.session_state:
-               st.session_state.other_df = pd.DataFrame([
-                   {"期別": "其他費用", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
-               ])
+    st.session_state.external_df = pd.DataFrame([
+        {"期別": "外管補助", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
+    ])
+if 'publicart_df' not in st.session_state:
+    st.session_state.publicart_df = pd.DataFrame([
+        {"期別": "公共藝術", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
+    ])
+if 'other_df' not in st.session_state:
+    st.session_state.other_df = pd.DataFrame([
+        {"期別": "其他費用", "基準點": "預計完工", "相對月數": 0, "比例": 1.00},
+    ])
  
         editor_config = {
             "期別":   st.column_config.TextColumn("款項名稱"),
