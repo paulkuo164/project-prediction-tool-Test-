@@ -4,3 +4,4 @@ numpy
 plotly
 openpyxl
 xlsxwriter
+kaleido==0.2.1
