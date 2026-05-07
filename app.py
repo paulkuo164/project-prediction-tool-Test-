@@ -117,10 +117,29 @@ if active_file:
         st.sidebar.markdown(f"📌 **統包施工費：`{const_p:,.0f}` 元**")
         st.sidebar.caption("（= 決標金額 − 設計費，下列各項費用之計算基數）")
 
-        pcm_pct = st.sidebar.slider("專管及監造服務費 (%)", 0.0, 10.0, 4.0, 0.1,
-                                    help="包含耐震特別監督，預設 4%，可調")
-        pcm_fee = round(const_p * pcm_pct / 100, 0)
-        st.sidebar.caption(f"　專管監造費：**{pcm_fee:,.0f} 元**")
+        # ===== 🆕 專管及監造服務費：拆成三項手動輸入 =====
+        st.sidebar.markdown("**🏢 專管及監造服務費（手動輸入）**")
+        pm_fee = st.sidebar.number_input(
+            "1. 專案管理服務費 (元)",
+            value=round(const_p * 0.015, 0),
+            step=10000.0,
+            help="專案管理服務費，預設約 1.5%"
+        )
+        supervision_fee = st.sidebar.number_input(
+            "2. 監造服務費 (元)",
+            value=round(const_p * 0.02, 0),
+            step=10000.0,
+            help="監造服務費，預設約 2%"
+        )
+        seismic_fee = st.sidebar.number_input(
+            "3. 耐震特別監督費用 (元)",
+            value=round(const_p * 0.005, 0),
+            step=10000.0,
+            help="耐震特別監督費用，預設約 0.5%"
+        )
+        pcm_fee = pm_fee + supervision_fee + seismic_fee
+        st.sidebar.caption(f"　專管監造費合計：**{pcm_fee:,.0f} 元**")
+        # ===== 🆕 end =====
 
         reserve_fee = round(const_p * 0.02, 0)
         st.sidebar.caption(f"🔒 準備金 (2%)：**{reserve_fee:,.0f} 元**")
@@ -163,16 +182,21 @@ if active_file:
         env_ratio = st.sidebar.slider("修正倍率", 0.5, 2.0, float(vendor_suggested)) if use_env_adj else 1.0
         use_protection = st.sidebar.toggle("啟動進度保護機制", value=True)
 
+        # ===== 🆕 費用結構拆分表（含三項專管監造） =====
+        _safe = lambda x: x / const_p * 100 if const_p > 0 else 0.0
         with st.expander("💼 本案費用結構拆分（點擊展開/收合）", expanded=False):
             fee_breakdown_df = pd.DataFrame([
-                {"項目": "設計費",               "比例(%)": f"{design_pct:.2f}",   "預估金額(元)": f"{design_f:,.0f}",       "基數": "決標金額",   "備註": "可調"},
-                {"項目": "統包施工費",           "比例(%)": "—",                   "預估金額(元)": f"{const_p:,.0f}",         "基數": "—",         "備註": "決標金額 − 設計費"},
-                {"項目": "專管及監造服務費",     "比例(%)": f"{pcm_pct:.2f}",      "預估金額(元)": f"{pcm_fee:,.0f}",         "基數": "統包施工費", "備註": "含耐震特別監督，可調"},
-                {"項目": "準備金",               "比例(%)": "2.00",                "預估金額(元)": f"{reserve_fee:,.0f}",     "基數": "統包施工費", "備註": "🔒 鎖定（不參與 S-curve 撥款）"},
-                {"項目": "物調款",               "比例(%)": f"{price_adj_pct:.2f}","預估金額(元)": f"{price_adj_fee:,.0f}",   "基數": "統包施工費", "備註": "可調"},
-                {"項目": "外管補助費",           "比例(%)": "1.00",                "預估金額(元)": f"{external_fee:,.0f}",    "基數": "統包施工費", "備註": "🔒 鎖定"},
-                {"項目": "公共藝術",             "比例(%)": "1.00",                "預估金額(元)": f"{public_art_fee:,.0f}",  "基數": "統包施工費", "備註": "🔒 鎖定"},
-                {"項目": "其他費用",             "比例(%)": "—",                   "預估金額(元)": f"{other_fee:,.0f}",       "基數": "—",         "備註": "手動輸入"},
+                {"項目": "設計費",                 "比例(%)": f"{design_pct:.2f}",              "預估金額(元)": f"{design_f:,.0f}",          "基數": "決標金額",   "備註": "可調"},
+                {"項目": "統包施工費",             "比例(%)": "—",                               "預估金額(元)": f"{const_p:,.0f}",            "基數": "—",         "備註": "決標金額 − 設計費"},
+                {"項目": "　└ 專案管理服務費",     "比例(%)": f"{_safe(pm_fee):.2f}",            "預估金額(元)": f"{pm_fee:,.0f}",             "基數": "統包施工費", "備註": "手動輸入，可調"},
+                {"項目": "　└ 監造服務費",         "比例(%)": f"{_safe(supervision_fee):.2f}",   "預估金額(元)": f"{supervision_fee:,.0f}",    "基數": "統包施工費", "備註": "手動輸入，可調"},
+                {"項目": "　└ 耐震特別監督費用",   "比例(%)": f"{_safe(seismic_fee):.2f}",       "預估金額(元)": f"{seismic_fee:,.0f}",        "基數": "統包施工費", "備註": "手動輸入，可調"},
+                {"項目": "　　 專管監造合計",      "比例(%)": f"{_safe(pcm_fee):.2f}",           "預估金額(元)": f"{pcm_fee:,.0f}",            "基數": "統包施工費", "備註": "三項合計（S-curve 撥款）"},
+                {"項目": "準備金",                 "比例(%)": "2.00",                            "預估金額(元)": f"{reserve_fee:,.0f}",        "基數": "統包施工費", "備註": "🔒 鎖定（不參與 S-curve 撥款）"},
+                {"項目": "物調款",                 "比例(%)": f"{price_adj_pct:.2f}",            "預估金額(元)": f"{price_adj_fee:,.0f}",      "基數": "統包施工費", "備註": "可調"},
+                {"項目": "外管補助費",             "比例(%)": "1.00",                            "預估金額(元)": f"{external_fee:,.0f}",       "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "公共藝術",               "比例(%)": "1.00",                            "預估金額(元)": f"{public_art_fee:,.0f}",     "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "其他費用",               "比例(%)": "—",                               "預估金額(元)": f"{other_fee:,.0f}",          "基數": "—",         "備註": "手動輸入"},
             ])
             st.table(fee_breakdown_df)
             c1, c2, c3 = st.columns(3)
@@ -596,13 +620,10 @@ if active_file:
             with col2:
                 st.write("#### 📥 報表下載")
 
-                # ===== 🆕 將 S-Curve 圖轉成 PNG (bytes) =====
-                # 說明：先把 Plotly 圖匯出為 PNG，若 kaleido 未安裝則給予提示
                 scurve_png_bytes = None
                 scurve_png_error = None
                 try:
-                    # 建立一個「匯出用」的 figure：移除 hovertemplate，放大尺寸，標題改單行
-                    fig_export = go.Figure(fig)  # 複製
+                    fig_export = go.Figure(fig)
                     fig_export.update_layout(
                         width=1400,
                         height=700,
@@ -613,7 +634,6 @@ if active_file:
                 except Exception as e:
                     scurve_png_error = str(e)
 
-                # ===== 匯出多工作表 Excel =====
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     workbook = writer.book
@@ -623,32 +643,26 @@ if active_file:
                     title_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'left'})
                     note_fmt  = workbook.add_format({'italic': True, 'font_color': '#666666'})
 
-                    # ===== 🆕 Sheet 0: S-Curve 進度圖 =====
+                    # Sheet 0: S-Curve 進度圖
                     ws_chart = workbook.add_worksheet('S-Curve 進度圖')
                     writer.sheets['S-Curve 進度圖'] = ws_chart
-                    ws_chart.set_column('A:A', 2)   # 左側留白
+                    ws_chart.set_column('A:A', 2)
                     ws_chart.write('B2', f'{target_case_name} S-Curve 進度預測與風險分析', title_fmt)
                     ws_chart.write('B3', f'預測基準工期：{manual_dur} 天　｜　修正倍率：{env_ratio:.2f}　｜　模擬次數：{num_sims}', note_fmt)
 
                     if scurve_png_bytes is not None:
                         ws_chart.insert_image(
                             'B5', 'scurve.png',
-                            {
-                                'image_data': io.BytesIO(scurve_png_bytes),
-                                'x_scale'   : 0.55,   # 縮放比例可調
-                                'y_scale'   : 0.55,
-                                'object_position': 1,
-                            }
+                            {'image_data': io.BytesIO(scurve_png_bytes), 'x_scale': 0.55, 'y_scale': 0.55, 'object_position': 1}
                         )
                     else:
-                        # kaleido 未安裝或轉圖失敗 → 寫提示訊息取代圖
                         warn_fmt = workbook.add_format({'font_color': '#C00000', 'bold': True})
                         ws_chart.write('B5', '⚠️ 無法生成 S-Curve 圖片', warn_fmt)
                         ws_chart.write('B6', '請在終端機執行：pip install -U kaleido')
                         if scurve_png_error:
                             ws_chart.write('B7', f'錯誤訊息：{scurve_png_error}')
 
-                    # ===== Sheet 1: 寬表總覽 =====
+                    # Sheet 1: 寬表總覽
                     export_wide = df_wide.copy()
                     if not export_wide.empty:
                         export_wide["支付日"] = pd.to_datetime(export_wide["支付日"]).dt.strftime('%Y-%m-%d')
@@ -663,7 +677,7 @@ if active_file:
                         export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
                     export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
 
-                    # ===== Sheet 2: 按月工程款 =====
+                    # Sheet 2: 按月工程款
                     export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
                     if not export_scurve.empty:
                         export_scurve["當月進度"] = export_scurve["當月進度"].apply(lambda x: f"+{x:.2f}%")
@@ -673,30 +687,33 @@ if active_file:
                         export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
                     export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
 
-                    # ===== Sheet 3: 費用拆分 =====
+                    # ===== 🆕 Sheet 3: 費用拆分（含三項專管監造） =====
                     fee_export_df = pd.DataFrame([
-                        {"項目": "決標金額",             "比例(%)": "",              "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
-                        {"項目": "設計費",               "比例(%)": design_pct,      "金額(元)": design_f,        "基數": "決標金額",   "備註": "可調（自訂期別撥款）"},
-                        {"項目": "統包施工費",           "比例(%)": "",              "金額(元)": const_p,         "基數": "",           "備註": "決標金額 − 設計費"},
-                        {"項目": "專管及監造服務費",     "比例(%)": pcm_pct,         "金額(元)": pcm_fee,         "基數": "統包施工費", "備註": "含耐震特別監督，可調（S-curve 撥款）"},
-                        {"項目": "準備金",               "比例(%)": 2.00,            "金額(元)": reserve_fee,     "基數": "統包施工費", "備註": "鎖定（不參與 S-curve 撥款）"},
-                        {"項目": "物調款",               "比例(%)": price_adj_pct,   "金額(元)": price_adj_fee,   "基數": "統包施工費", "備註": "可調（S-curve 撥款）"},
-                        {"項目": "外管補助費",           "比例(%)": 1.00,            "金額(元)": external_fee,    "基數": "統包施工費", "備註": "鎖定（自訂期別撥款）"},
-                        {"項目": "公共藝術",             "比例(%)": 1.00,            "金額(元)": public_art_fee,  "基數": "統包施工費", "備註": "鎖定（自訂期別撥款）"},
-                        {"項目": "其他費用",             "比例(%)": "",              "金額(元)": other_fee,       "基數": "",           "備註": "手動輸入（自訂期別撥款）"},
-                        {"項目": "─────────",           "比例(%)": "",              "金額(元)": "",              "基數": "",           "備註": ""},
-                        {"項目": "S-curve 基數",         "比例(%)": "",              "金額(元)": scurve_base_total, "基數": "",         "備註": "施工 + 專管 + 物調（不含準備金）"},
-                        {"項目": "各項費用合計",         "比例(%)": "",              "金額(元)": total_all_fees,  "基數": "",           "備註": "設計費+專管+準備金+物調+外管+公共藝術+其他"},
+                        {"項目": "決標金額",               "比例(%)": "",                                    "金額(元)": total_p,         "基數": "",           "備註": "本案決標總金額"},
+                        {"項目": "設計費",                 "比例(%)": design_pct,                            "金額(元)": design_f,        "基數": "決標金額",   "備註": "可調（自訂期別撥款）"},
+                        {"項目": "統包施工費",             "比例(%)": "",                                    "金額(元)": const_p,         "基數": "",           "備註": "決標金額 − 設計費"},
+                        {"項目": "　└ 專案管理服務費",     "比例(%)": round(_safe(pm_fee), 2),               "金額(元)": pm_fee,          "基數": "統包施工費", "備註": "手動輸入，可調（S-curve 撥款）"},
+                        {"項目": "　└ 監造服務費",         "比例(%)": round(_safe(supervision_fee), 2),      "金額(元)": supervision_fee, "基數": "統包施工費", "備註": "手動輸入，可調（S-curve 撥款）"},
+                        {"項目": "　└ 耐震特別監督費用",   "比例(%)": round(_safe(seismic_fee), 2),          "金額(元)": seismic_fee,     "基數": "統包施工費", "備註": "手動輸入，可調（S-curve 撥款）"},
+                        {"項目": "　　 專管監造合計",      "比例(%)": round(_safe(pcm_fee), 2),              "金額(元)": pcm_fee,         "基數": "統包施工費", "備註": "三項合計（S-curve 撥款）"},
+                        {"項目": "準備金",                 "比例(%)": 2.00,                                  "金額(元)": reserve_fee,     "基數": "統包施工費", "備註": "鎖定（不參與 S-curve 撥款）"},
+                        {"項目": "物調款",                 "比例(%)": price_adj_pct,                         "金額(元)": price_adj_fee,   "基數": "統包施工費", "備註": "可調（S-curve 撥款）"},
+                        {"項目": "外管補助費",             "比例(%)": 1.00,                                  "金額(元)": external_fee,    "基數": "統包施工費", "備註": "鎖定（自訂期別撥款）"},
+                        {"項目": "公共藝術",               "比例(%)": 1.00,                                  "金額(元)": public_art_fee,  "基數": "統包施工費", "備註": "鎖定（自訂期別撥款）"},
+                        {"項目": "其他費用",               "比例(%)": "",                                    "金額(元)": other_fee,       "基數": "",           "備註": "手動輸入（自訂期別撥款）"},
+                        {"項目": "─────────",             "比例(%)": "",                                    "金額(元)": "",              "基數": "",           "備註": ""},
+                        {"項目": "S-curve 基數",           "比例(%)": "",                                    "金額(元)": scurve_base_total,"基數": "",          "備註": "施工 + 專管合計 + 物調（不含準備金）"},
+                        {"項目": "各項費用合計",           "比例(%)": "",                                    "金額(元)": total_all_fees,  "基數": "",           "備註": "設計費+專管+準備金+物調+外管+公共藝術+其他"},
                     ])
                     fee_export_df.to_excel(writer, sheet_name='費用拆分', index=False)
 
-                    # ===== 格式設定 =====
+                    # 格式設定
                     ws_fee = writer.sheets['費用拆分']
-                    ws_fee.set_column('A:A', 22)
+                    ws_fee.set_column('A:A', 24)
                     ws_fee.set_column('B:B', 10, pct_fmt)
                     ws_fee.set_column('C:C', 18, money_fmt)
                     ws_fee.set_column('D:D', 14)
-                    ws_fee.set_column('E:E', 30)
+                    ws_fee.set_column('E:E', 35)
 
                     ws_sc = writer.sheets['按月工程款']
                     ws_sc.set_column('A:A', 12)
@@ -716,12 +733,10 @@ if active_file:
                         last_row_w = len(export_wide)
                         ws_wide.set_row(last_row_w, None, bold_fmt)
 
-                    # ===== 🆕 將 "S-Curve 進度圖" 排到第一個分頁 =====
                     workbook.worksheets_objs.sort(
                         key=lambda s: 0 if s.name == 'S-Curve 進度圖' else 1
                     )
 
-                # 若轉圖失敗，畫面上提醒使用者
                 if scurve_png_bytes is None:
                     st.warning(f"⚠️ S-Curve 圖片產生失敗，Excel 仍可下載但圖片頁為空白。\n"
                                f"請執行 `pip install -U kaleido`。\n\n錯誤：{scurve_png_error}")
