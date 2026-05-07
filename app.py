@@ -425,9 +425,11 @@ if active_file:
                 })
 
         scurve_components = [
-            ("施工費",    const_p),
-            ("專管監造",  pcm_fee),
-            ("物調款",    price_adj_fee),
+            ("施工費",        const_p),
+            ("專案管理服務費", pm_fee),
+            ("監造服務費",     supervision_fee),
+            ("耐震監督費用",   seismic_fee),
+            ("物調款",        price_adj_fee),
         ]
         scurve_base_total = sum(v for _, v in scurve_components)
 
@@ -474,22 +476,25 @@ if active_file:
             df_scurve_pivot = df_scurve_long.pivot_table(
                 index="月份", columns="類別", values="金額", aggfunc='sum', fill_value=0
             ).reset_index()
-            for col in ["施工費", "專管監造", "物調款"]:
+            for col in ["施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款"]:
                 if col not in df_scurve_pivot.columns:
                     df_scurve_pivot[col] = 0
-            df_scurve_pivot = df_scurve_pivot[["月份", "施工費", "專管監造", "物調款"]]
-            df_scurve_pivot["當月合計"] = df_scurve_pivot[["施工費", "專管監造", "物調款"]].sum(axis=1)
+            df_scurve_pivot = df_scurve_pivot[["月份", "施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款"]]
+            df_scurve_pivot["當月合計"] = df_scurve_pivot[["施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款"]].sum(axis=1)
             df_scurve_pivot = df_scurve_pivot.merge(df_progress, on="月份", how="left")
-            df_scurve_pivot = df_scurve_pivot[["月份", "當月進度", "施工費", "專管監造", "物調款", "當月合計"]]
+            df_scurve_pivot = df_scurve_pivot[["月份", "當月進度", "施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "當月合計"]]
         else:
-            df_scurve_pivot = pd.DataFrame(columns=["月份", "當月進度", "施工費", "專管監造", "物調款", "當月合計"])
+            df_scurve_pivot = pd.DataFrame(columns=["月份", "當月進度", "施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "當月合計"])
 
         WIDE_COLS = ["期別", "設計費", "外管補助", "公共藝術", "其他費用",
-                     "專管監造", "物調款", "施工費", "支付日", "金額", "月份"]
+                     "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "施工費", "支付日", "金額", "月份"]
         KIND_TO_COL = {
             "設計費": "設計費", "外管補助": "外管補助",
             "公共藝術": "公共藝術", "其他費用": "其他費用",
-            "施工費": "施工費", "專管監造": "專管監造",
+            "施工費": "施工費",
+            "專案管理服務費": "專案管理服務費",
+            "監造服務費": "監造服務費",
+            "耐震監督費用": "耐震監督費用",
             "物調款": "物調款",
         }
 
@@ -509,7 +514,7 @@ if active_file:
             wide_rows.append(row)
 
         df_scurve_src = df_pay[df_pay["性質"].isin(
-            ["施工費", "專管監造", "物調款"])].copy()
+            ["施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款"])].copy()
         if not df_scurve_src.empty:
             df_scurve_src["月份標籤"] = df_scurve_src["期別"].str.extract(r'工程估驗\s+(\d{4}/\d{2})')[0]
             for (month_label, pay_date), grp in df_scurve_src.groupby(["月份標籤", "支付日"]):
@@ -550,8 +555,8 @@ if active_file:
 
         with tab2:
             st.markdown("#### 🏗️ 工程款按月明細（S-curve 撥款）")
-            st.caption(f"基數 = 施工費 + 專管監造 + 物調款 = **{scurve_base_total:,.0f}** 元　"
-                       f"每月按 S-curve 進度比例同步撥付此三項（準備金不參與 S-curve 撥款）")
+            st.caption(f"基數 = 施工費 + 專案管理服務費 + 監造服務費 + 耐震監督費用 + 物調款 = **{scurve_base_total:,.0f}** 元　"
+                       f"每月按 S-curve 進度比例同步撥付此五項（準備金不參與 S-curve 撥款）")
 
             if not df_scurve_pivot.empty:
                 df_scurve_pivot["合約年度"] = df_scurve_pivot["月份"].apply(
@@ -562,7 +567,7 @@ if active_file:
                         df_y = df_scurve_pivot[df_scurve_pivot["合約年度"] == year].copy()
                         df_show = df_y.drop(columns=["合約年度"]).copy()
                         df_show["當月進度"] = df_show["當月進度"].apply(lambda x: f"+{x:.2f}%")
-                        for col in ["施工費", "專管監造", "物調款", "當月合計"]:
+                        for col in ["施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "當月合計"]:
                             df_show[col] = df_show[col].apply(lambda x: f"{int(x):,}")
                         st.table(df_show)
                         st.markdown(f"**💰 {year} 工程款小計： `{int(df_y['當月合計'].sum()):,}` 元**")
@@ -587,7 +592,7 @@ if active_file:
 
         with tab3:
             st.markdown("#### 📑 寬表總覽")
-            st.caption("每期一列，金額橫向分布到對應費用欄位；工程估驗為合併列，三個欄位（施工費/專管監造/物調款）同時有值")
+            st.caption("每期一列，金額橫向分布到對應費用欄位；工程估驗為合併列，五個欄位（施工費/專案管理服務費/監造服務費/耐震監督費用/物調款）同時有值")
 
             if df_wide.empty:
                 st.info("尚無任何期別資料")
@@ -597,7 +602,7 @@ if active_file:
                     lambda x: get_contract_year(x, contract_d))
 
                 amount_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
-                               "專管監造", "物調款", "施工費", "金額"]
+                               "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "施工費", "金額"]
 
                 def _fmt(v):
                     if v == "" or v is None: return ""
@@ -681,7 +686,7 @@ if active_file:
                     if not export_wide.empty:
                         export_wide["支付日"] = pd.to_datetime(export_wide["支付日"]).dt.strftime('%Y-%m-%d')
                         amt_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
-                                    "專管監造", "物調款", "施工費", "金額"]
+                                    "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "施工費", "金額"]
                         for c in amt_cols:
                             export_wide[c] = pd.to_numeric(export_wide[c], errors='coerce').fillna(0).astype(int)
                         total_row = {c: "" for c in WIDE_COLS}
@@ -696,7 +701,7 @@ if active_file:
                     if not export_scurve.empty:
                         export_scurve["當月進度"] = export_scurve["當月進度"].apply(lambda x: f"+{x:.2f}%")
                         total_row = {"月份": "總計", "當月進度": ""}
-                        for c in ["施工費", "專管監造", "物調款", "當月合計"]:
+                        for c in ["施工費", "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "當月合計"]:
                             total_row[c] = int(export_scurve[c].sum())
                         export_scurve = pd.concat([export_scurve, pd.DataFrame([total_row])], ignore_index=True)
                     export_scurve.to_excel(writer, sheet_name='按月工程款', index=False)
@@ -732,17 +737,17 @@ if active_file:
                     ws_sc = writer.sheets['按月工程款']
                     ws_sc.set_column('A:A', 12)
                     ws_sc.set_column('B:B', 12)
-                    ws_sc.set_column('C:F', 16, money_fmt)
+                    ws_sc.set_column('C:H', 16, money_fmt)
                     if not export_scurve.empty:
                         last_row = len(export_scurve)
                         ws_sc.set_row(last_row, None, bold_fmt)
 
                     ws_wide = writer.sheets['寬表總覽']
                     ws_wide.set_column('A:A', 24)
-                    ws_wide.set_column('B:H', 14, money_fmt)
-                    ws_wide.set_column('I:I', 13)
-                    ws_wide.set_column('J:J', 16, money_fmt)
-                    ws_wide.set_column('K:K', 10)
+                    ws_wide.set_column('B:J', 14, money_fmt)
+                    ws_wide.set_column('K:K', 13)
+                    ws_wide.set_column('L:L', 16, money_fmt)
+                    ws_wide.set_column('M:M', 10)
                     if not export_wide.empty:
                         last_row_w = len(export_wide)
                         ws_wide.set_row(last_row_w, None, bold_fmt)
