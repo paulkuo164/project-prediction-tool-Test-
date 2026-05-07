@@ -593,32 +593,60 @@ if active_file:
         with tab3:
             st.markdown("#### 📑 寬表總覽")
             st.caption("每期一列，金額橫向分布到對應費用欄位；工程估驗為合併列，五個欄位（施工費/專案管理服務費/監造服務費/耐震監督費用/物調款）同時有值")
+            st.caption("🔴 粉紅色列 = 當期累計金額已超出決標金額")
 
             if df_wide.empty:
                 st.info("尚無任何期別資料")
             else:
+                # ── 全局排序後計算累計金額 ──
                 df_wide_disp = df_wide.copy()
+                df_wide_disp = df_wide_disp.sort_values("支付日").reset_index(drop=True)
+                df_wide_disp["累計金額"] = (
+                    pd.to_numeric(df_wide_disp["金額"], errors='coerce').fillna(0).cumsum()
+                )
                 df_wide_disp["合約年度"] = df_wide_disp["支付日"].apply(
                     lambda x: get_contract_year(x, contract_d))
 
-                amount_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
-                               "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "施工費", "金額"]
+                # 若有任何期別超支，顯示全域警告
+                overbudget_rows = df_wide_disp[df_wide_disp["累計金額"] > total_p]
+                if not overbudget_rows.empty:
+                    first_over = pd.to_datetime(overbudget_rows["支付日"].iloc[0]).strftime('%Y-%m-%d')
+                    st.warning(
+                        f"⚠️ **超支預警**：自 {first_over} 起，累計金額超過決標金額 "
+                        f"**{total_p:,.0f} 元**，請注意預算控管！"
+                    )
 
-                def _fmt(v):
-                    if v == "" or v is None: return ""
+                num_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
+                            "專案管理服務費", "監造服務費", "耐震監督費用",
+                            "物調款", "施工費", "金額", "累計金額"]
+
+                def fmt_money(v):
+                    if pd.isna(v) or v == 0: return ""
+                    try:    return f"{int(v):,}"
+                    except: return str(v)
+
+                def highlight_overbudget(row):
                     try:
-                        return f"{int(v):,}"
+                        if float(row["累計金額"]) > total_p:
+                            return ["background-color:#FFB6C1; color:#c0392b"] * len(row)
                     except Exception:
-                        return str(v)
+                        pass
+                    return [""] * len(row)
 
                 for year in df_wide_disp["合約年度"].unique():
                     df_y = df_wide_disp[df_wide_disp["合約年度"] == year].copy()
                     with st.expander(f"📅 {year}", expanded=True):
                         df_show = df_y.drop(columns=["合約年度"]).copy()
                         df_show["支付日"] = pd.to_datetime(df_show["支付日"]).dt.strftime('%Y-%m-%d')
-                        for c in amount_cols:
-                            df_show[c] = df_show[c].apply(_fmt)
-                        st.dataframe(df_show, use_container_width=True, hide_index=True)
+                        for c in num_cols:
+                            df_show[c] = pd.to_numeric(df_show[c], errors='coerce')
+
+                        styled = (
+                            df_show.style
+                            .apply(highlight_overbudget, axis=1)
+                            .format({c: fmt_money for c in num_cols})
+                        )
+                        st.dataframe(styled, use_container_width=True, hide_index=True)
 
                         yearly_sum = int(pd.to_numeric(df_y["金額"], errors='coerce').fillna(0).sum())
                         st.markdown(f"**💰 {year} 合計： `{yearly_sum:,}` 元**")
@@ -684,17 +712,41 @@ if active_file:
                     # Sheet 1: 寬表總覽
                     export_wide = df_wide.copy()
                     if not export_wide.empty:
+                        export_wide = export_wide.sort_values("支付日").reset_index(drop=True)
                         export_wide["支付日"] = pd.to_datetime(export_wide["支付日"]).dt.strftime('%Y-%m-%d')
                         amt_cols = ["設計費", "外管補助", "公共藝術", "其他費用",
                                     "專案管理服務費", "監造服務費", "耐震監督費用", "物調款", "施工費", "金額"]
                         for c in amt_cols:
                             export_wide[c] = pd.to_numeric(export_wide[c], errors='coerce').fillna(0).astype(int)
+                        # 加入累計金額欄
+                        export_wide["累計金額"] = export_wide["金額"].cumsum()
                         total_row = {c: "" for c in WIDE_COLS}
                         total_row["期別"] = "總計"
                         for c in amt_cols:
                             total_row[c] = int(export_wide[c].sum())
+                        total_row["累計金額"] = int(export_wide["累計金額"].iloc[-1])
                         export_wide = pd.concat([export_wide, pd.DataFrame([total_row])], ignore_index=True)
                     export_wide.to_excel(writer, sheet_name='寬表總覽', index=False)
+
+                    # 寬表總覽：粉紅超支格式
+                    ws_wide = writer.sheets['寬表總覽']
+                    pink_fmt  = workbook.add_format({'bg_color': '#FFB6C1', 'font_color': '#C00000', 'num_format': '#,##0'})
+                    pink_bold = workbook.add_format({'bg_color': '#FFB6C1', 'font_color': '#C00000', 'bold': True, 'num_format': '#,##0'})
+                    if not export_wide.empty:
+                        cum_col_idx = list(export_wide.columns).index("累計金額")
+                        for row_idx, row_val in export_wide.iterrows():
+                            try:
+                                cum_val = float(row_val["累計金額"])
+                            except (ValueError, TypeError):
+                                continue
+                            if cum_val > total_p:
+                                fmt_to_use = pink_bold if row_val["期別"] == "總計" else pink_fmt
+                                for col_idx in range(len(export_wide.columns)):
+                                    cell_val = row_val.iloc[col_idx]
+                                    if isinstance(cell_val, (int, float)) and not isinstance(cell_val, bool):
+                                        ws_wide.write_number(row_idx + 1, col_idx, cell_val, fmt_to_use)
+                                    else:
+                                        ws_wide.write(row_idx + 1, col_idx, str(cell_val) if cell_val != "" else "", fmt_to_use)
 
                     # Sheet 2: 按月工程款
                     export_scurve = df_scurve_pivot.drop(columns=["合約年度"], errors='ignore').copy()
@@ -742,12 +794,12 @@ if active_file:
                         last_row = len(export_scurve)
                         ws_sc.set_row(last_row, None, bold_fmt)
 
-                    ws_wide = writer.sheets['寬表總覽']
                     ws_wide.set_column('A:A', 24)
                     ws_wide.set_column('B:J', 14, money_fmt)
                     ws_wide.set_column('K:K', 13)
                     ws_wide.set_column('L:L', 16, money_fmt)
-                    ws_wide.set_column('M:M', 10)
+                    ws_wide.set_column('M:M', 16, money_fmt)  # 累計金額
+                    ws_wide.set_column('N:N', 10)
                     if not export_wide.empty:
                         last_row_w = len(export_wide)
                         ws_wide.set_row(last_row_w, None, bold_fmt)
