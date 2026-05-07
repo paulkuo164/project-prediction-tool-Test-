@@ -155,9 +155,23 @@ if active_file:
         public_art_fee = round(const_p * 0.01, 0)
         st.sidebar.caption(f"🔒 公共藝術 (1%)：**{public_art_fee:,.0f} 元**")
 
-        suggested_other = max(0, round(const_p * 0.15 - design_f - pcm_fee - reserve_fee - price_adj_fee, 0))
-        other_fee = st.sidebar.number_input("其他費用 (元)", value=float(suggested_other), step=10000.0,
-                                            help=f"建議值 {suggested_other:,.0f} 元（= 統包施工費×15% − 設計費 − 專管 − 準備金 − 物調款）")
+        other_fee = max(0, round(
+            const_p * 1.2
+            - const_p
+            - design_f
+            - pm_fee
+            - supervision_fee
+            - seismic_fee
+            - reserve_fee
+            - price_adj_fee
+            - external_fee
+            - public_art_fee,
+            0
+        ))
+        st.sidebar.caption(
+            f"🔒 其他費用（自動計算）：**{other_fee:,.0f} 元**\n\n"
+            f"（= 統包施工費×1.2 − 統包施工費 − 設計費 − 專管 − 監造 − 耐震 − 準備金 − 物調 − 外管 − 公共藝術）"
+        )
 
         total_all_fees = design_f + pcm_fee + reserve_fee + price_adj_fee + external_fee + public_art_fee + other_fee
         st.sidebar.markdown(f"💰 **費用總計：`{total_all_fees:,.0f}` 元**")
