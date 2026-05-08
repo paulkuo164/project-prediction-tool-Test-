@@ -131,6 +131,7 @@ if active_file:
             step=10000.0,
             help="監造服務費，預設約 2%"
         )
+        manual_dur = st.sidebar.number_input("基準預期施工總天數", value=1100)
         st.sidebar.markdown("**3. 耐震特別監督費用（依進度自動計算）**")
         st.sidebar.caption("進度 20%～80% 期間，以人頭計費；費用於模擬後精確更新")
         seismic_headcount = st.sidebar.number_input(
