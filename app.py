@@ -131,14 +131,24 @@ if active_file:
             step=10000.0,
             help="監造服務費，預設約 2%"
         )
-        seismic_fee = st.sidebar.number_input(
-            "3. 耐震特別監督費用 (元)",
-            value=round(const_p * 0.005, 0),
-            step=10000.0,
-            help="耐震特別監督費用，預設約 0.5%"
+        st.sidebar.markdown("**3. 耐震特別監督費用（依進度自動計算）**")
+        st.sidebar.caption("進度 20%～80% 期間，以人頭計費；費用於模擬後精確更新")
+        seismic_headcount = st.sidebar.number_input(
+            "耐震監督人數（人）", min_value=1, max_value=20, value=1, step=1,
+            help="進度 20%～80% 期間在場之耐震特別監督人員數"
+        )
+        seismic_monthly_rate = st.sidebar.number_input(
+            "每人每月費用 (元)", value=240000.0, step=10000.0,
+            help="每位耐震監督人員每月費用，預設 24 萬"
+        )
+        # 先用基準工期估算（模擬後精確更新）
+        _seismic_est_months = manual_dur * 0.6 / 30
+        seismic_fee = round(seismic_headcount * seismic_monthly_rate * _seismic_est_months, 0)
+        st.sidebar.caption(
+            f"　估算耐震費（約 {_seismic_est_months:.1f} 月）：**{seismic_fee:,.0f} 元**"
         )
         pcm_fee = pm_fee + supervision_fee + seismic_fee
-        st.sidebar.caption(f"　專管監造費合計：**{pcm_fee:,.0f} 元**")
+        st.sidebar.caption(f"　專管監造費合計（估算）：**{pcm_fee:,.0f} 元**")
         # ===== 🆕 end =====
 
         reserve_fee = round(const_p * 0.02, 0)
@@ -169,12 +179,11 @@ if active_file:
             0
         ))
         st.sidebar.caption(
-            f"🔒 其他費用（自動計算）：**{other_fee:,.0f} 元**\n\n"
-            f"（= 統包施工費×1.2 − 統包施工費 − 設計費 − 專管 − 監造 − 耐震 − 準備金 − 物調 − 外管 − 公共藝術）"
+            f"🔒 其他費用（估算）：**{other_fee:,.0f} 元**　（耐震費確定後精確更新）"
         )
 
         total_all_fees = design_f + pcm_fee + reserve_fee + price_adj_fee + external_fee + public_art_fee + other_fee
-        st.sidebar.markdown(f"💰 **費用總計：`{total_all_fees:,.0f}` 元**")
+        st.sidebar.markdown(f"💰 **費用總計（估算）：`{total_all_fees:,.0f}` 元**")
 
         st.sidebar.markdown("---")
         contract_d = st.sidebar.date_input("合約起始日期", value=init_contract_date)
@@ -195,28 +204,6 @@ if active_file:
         use_env_adj = st.sidebar.toggle("啟用風險修正係數", value=True if r_vals else False)
         env_ratio = st.sidebar.slider("修正倍率", 0.5, 2.0, float(vendor_suggested)) if use_env_adj else 1.0
         use_protection = st.sidebar.toggle("啟動進度保護機制", value=True)
-
-        # ===== 🆕 費用結構拆分表（含三項專管監造） =====
-        _safe = lambda x: x / const_p * 100 if const_p > 0 else 0.0
-        with st.expander("💼 本案費用結構拆分（點擊展開/收合）", expanded=False):
-            fee_breakdown_df = pd.DataFrame([
-                {"項目": "設計費",                 "比例(%)": f"{design_pct:.2f}",              "預估金額(元)": f"{design_f:,.0f}",          "基數": "決標金額",   "備註": "可調"},
-                {"項目": "統包施工費",             "比例(%)": "—",                               "預估金額(元)": f"{const_p:,.0f}",            "基數": "—",         "備註": "決標金額 − 設計費"},
-                {"項目": "　└ 專案管理服務費",     "比例(%)": f"{_safe(pm_fee):.2f}",            "預估金額(元)": f"{pm_fee:,.0f}",             "基數": "統包施工費", "備註": "手動輸入，可調"},
-                {"項目": "　└ 監造服務費",         "比例(%)": f"{_safe(supervision_fee):.2f}",   "預估金額(元)": f"{supervision_fee:,.0f}",    "基數": "統包施工費", "備註": "手動輸入，可調"},
-                {"項目": "　└ 耐震特別監督費用",   "比例(%)": f"{_safe(seismic_fee):.2f}",       "預估金額(元)": f"{seismic_fee:,.0f}",        "基數": "統包施工費", "備註": "手動輸入，可調"},
-                {"項目": "　　 專管監造合計",      "比例(%)": f"{_safe(pcm_fee):.2f}",           "預估金額(元)": f"{pcm_fee:,.0f}",            "基數": "統包施工費", "備註": "三項合計（S-curve 撥款）"},
-                {"項目": "準備金",                 "比例(%)": "2.00",                            "預估金額(元)": f"{reserve_fee:,.0f}",        "基數": "統包施工費", "備註": "🔒 鎖定（不參與 S-curve 撥款）"},
-                {"項目": "物調款",                 "比例(%)": f"{price_adj_pct:.2f}",            "預估金額(元)": f"{price_adj_fee:,.0f}",      "基數": "統包施工費", "備註": "可調"},
-                {"項目": "外管補助費",             "比例(%)": "1.00",                            "預估金額(元)": f"{external_fee:,.0f}",       "基數": "統包施工費", "備註": "🔒 鎖定"},
-                {"項目": "公共藝術",               "比例(%)": "1.00",                            "預估金額(元)": f"{public_art_fee:,.0f}",     "基數": "統包施工費", "備註": "🔒 鎖定"},
-                {"項目": "其他費用",               "比例(%)": "—",                               "預估金額(元)": f"{other_fee:,.0f}",          "基數": "—",         "備註": "手動輸入"},
-            ])
-            st.table(fee_breakdown_df)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("決標金額", f"{total_p:,.0f} 元")
-            c2.metric("統包施工費", f"{const_p:,.0f} 元")
-            c3.metric("各項費用合計", f"{total_all_fees:,.0f} 元")
 
         # --- 核心數據處理與模擬 ---
         start_dt = pd.to_datetime(start_d)
@@ -271,6 +258,50 @@ if active_file:
         u_days = (np.concatenate([target_df["天數"].values, mean_c])) * env_ratio
         u_prog = np.concatenate([target_df["累計_norm"].values, prog_steps])
         s_idx = np.argsort(u_days); u_days, u_prog = u_days[s_idx], u_prog[s_idx]
+
+        # ===== 🔔 耐震費精確計算（S-curve 進度 20%→80%） =====
+        _u_prog_min, _u_prog_max = float(u_prog.min()), float(u_prog.max())
+        _seismic_start = max(20.0, _u_prog_min)
+        _seismic_end   = min(80.0, _u_prog_max)
+        day_at_20 = float(np.interp(_seismic_start, u_prog, u_days)) / (env_ratio if env_ratio > 0 else 1)
+        day_at_80 = float(np.interp(_seismic_end,   u_prog, u_days)) / (env_ratio if env_ratio > 0 else 1)
+        seismic_months = max(0.0, (day_at_80 - day_at_20) / 30)
+        seismic_fee    = round(seismic_headcount * seismic_monthly_rate * seismic_months, 0)
+        # 重新計算依賴耐震費的所有變數
+        pcm_fee        = pm_fee + supervision_fee + seismic_fee
+        other_fee      = max(0, round(
+            const_p * 1.2 - const_p - design_f
+            - pm_fee - supervision_fee - seismic_fee
+            - reserve_fee - price_adj_fee - external_fee - public_art_fee, 0
+        ))
+        total_all_fees = design_f + pcm_fee + reserve_fee + price_adj_fee + external_fee + public_art_fee + other_fee
+
+        # ===== 費用結構拆分表（精確值，模擬後顯示） =====
+        _safe = lambda x: x / const_p * 100 if const_p > 0 else 0.0
+        with st.expander("💼 本案費用結構拆分（點擊展開/收合）", expanded=False):
+            st.info(
+                f"🔔 **耐震特別監督費**：進度 **{_seismic_start:.0f}%** → **{_seismic_end:.0f}%**，"
+                f"歷時 **{seismic_months:.1f} 個月**，"
+                f"{seismic_headcount} 人 × {seismic_monthly_rate:,.0f} 元/月 = **{seismic_fee:,.0f} 元**"
+            )
+            fee_breakdown_df = pd.DataFrame([
+                {"項目": "設計費",                 "比例(%)": f"{design_pct:.2f}",               "精確金額(元)": f"{design_f:,.0f}",          "基數": "決標金額",   "備註": "可調"},
+                {"項目": "統包施工費",             "比例(%)": "—",                                "精確金額(元)": f"{const_p:,.0f}",            "基數": "—",         "備註": "決標金額 − 設計費"},
+                {"項目": "　└ 專案管理服務費",     "比例(%)": f"{_safe(pm_fee):.2f}",             "精確金額(元)": f"{pm_fee:,.0f}",             "基數": "統包施工費", "備註": "手動輸入，可調"},
+                {"項目": "　└ 監造服務費",         "比例(%)": f"{_safe(supervision_fee):.2f}",    "精確金額(元)": f"{supervision_fee:,.0f}",    "基數": "統包施工費", "備註": "手動輸入，可調"},
+                {"項目": "　└ 耐震特別監督費用",   "比例(%)": f"{_safe(seismic_fee):.2f}",        "精確金額(元)": f"{seismic_fee:,.0f}",        "基數": "統包施工費", "備註": f"進度 {_seismic_start:.0f}%～{_seismic_end:.0f}%，{seismic_months:.1f} 月"},
+                {"項目": "　　 專管監造合計",      "比例(%)": f"{_safe(pcm_fee):.2f}",            "精確金額(元)": f"{pcm_fee:,.0f}",            "基數": "統包施工費", "備註": "三項合計（S-curve 撥款）"},
+                {"項目": "準備金",                 "比例(%)": "2.00",                             "精確金額(元)": f"{reserve_fee:,.0f}",        "基數": "統包施工費", "備註": "🔒 鎖定（不參與 S-curve 撥款）"},
+                {"項目": "物調款",                 "比例(%)": f"{price_adj_pct:.2f}",             "精確金額(元)": f"{price_adj_fee:,.0f}",      "基數": "統包施工費", "備註": "可調"},
+                {"項目": "外管補助費",             "比例(%)": "1.00",                             "精確金額(元)": f"{external_fee:,.0f}",       "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "公共藝術",               "比例(%)": "1.00",                             "精確金額(元)": f"{public_art_fee:,.0f}",     "基數": "統包施工費", "備註": "🔒 鎖定"},
+                {"項目": "其他費用",               "比例(%)": "—",                                "精確金額(元)": f"{other_fee:,.0f}",          "基數": "—",         "備註": "自動計算"},
+            ])
+            st.table(fee_breakdown_df)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("決標金額", f"{total_p:,.0f} 元")
+            c2.metric("統包施工費", f"{const_p:,.0f} 元")
+            c3.metric("各項費用合計", f"{total_all_fees:,.0f} 元")
 
         PERIOD_DAYS = 30
 
